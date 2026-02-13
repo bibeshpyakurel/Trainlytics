@@ -46,7 +46,7 @@ export default function LoginPage() {
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(245,158,11,0.22),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(16,185,129,0.16),transparent_30%),radial-gradient(circle_at_50%_100%,rgba(59,130,246,0.14),transparent_36%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(245,158,11,0.24),transparent_34%),radial-gradient(circle_at_88%_10%,rgba(16,185,129,0.18),transparent_32%),radial-gradient(circle_at_60%_95%,rgba(59,130,246,0.14),transparent_38%)]" />
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:44px_44px] opacity-20" />
         <div className="absolute -top-24 left-[-40px] h-64 w-64 rounded-full bg-amber-400/20 blur-3xl" />
         <div className="absolute bottom-[-80px] right-[-20px] h-72 w-72 rounded-full bg-emerald-400/20 blur-3xl" />
@@ -68,13 +68,23 @@ export default function LoginPage() {
             Every rep compounds. Show up, log your sets, and keep the streak alive.
           </p>
 
-          <div className="mt-8 flex flex-wrap gap-3 text-sm text-zinc-200">
-            <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-3 py-1">🔥 Stay Locked In</span>
-            <span className="rounded-full border border-zinc-700 bg-zinc-900/70 px-3 py-1">⚡ Beat Yesterday</span>
+          <div className="mt-8 grid max-w-md grid-cols-3 gap-3 text-center text-xs text-zinc-200">
+            <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 px-3 py-3">
+              <p className="text-lg font-semibold text-white">4x</p>
+              <p className="mt-1 text-zinc-400">Sessions/Wk</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 px-3 py-3">
+              <p className="text-lg font-semibold text-white">+1%</p>
+              <p className="mt-1 text-zinc-400">Every Day</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 px-3 py-3">
+              <p className="text-lg font-semibold text-white">PR</p>
+              <p className="mt-1 text-zinc-400">Mindset</p>
+            </div>
           </div>
         </div>
 
-        <div className="w-full max-w-md rounded-3xl border border-zinc-700/70 bg-zinc-900/70 p-7 shadow-2xl backdrop-blur-md">
+        <div className="w-full max-w-md rounded-3xl border border-zinc-700/70 bg-zinc-900/70 p-7 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-md">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">
             Bibesh Personal Gym Tracker
           </p>
@@ -114,6 +124,10 @@ export default function LoginPage() {
             >
               {loading ? "Working..." : "Sign in"}
             </button>
+
+            <p className="mt-4 text-center text-xs text-zinc-500">
+              Discipline over motivation. Keep the streak alive.
+            </p>
           </form>
 
           {msg && (

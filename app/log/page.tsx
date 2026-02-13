@@ -94,6 +94,8 @@ export default function LogWorkoutPage() {
     return Array.from(map.entries());
   }, [exercises]);
 
+  const splitLabel = split.charAt(0).toUpperCase() + split.slice(1);
+
   function updateWeighted(exId: string, setIdx: 0 | 1, patch: Partial<WeightedSet>) {
     setWeightedForm((prev) => {
       const cur = prev[exId] ?? [
@@ -245,126 +247,148 @@ export default function LogWorkoutPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold">Log Workout</h1>
+    <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(245,158,11,0.2),transparent_34%),radial-gradient(circle_at_88%_10%,rgba(16,185,129,0.14),transparent_30%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:46px_46px] opacity-20" />
+      </div>
 
-      <div className="mt-4 flex flex-wrap gap-3 items-center">
-        <label className="text-sm">
-          Date{" "}
-          <input
-            className="ml-2 border rounded-md p-2"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-        </label>
+      <div className="relative z-10 mx-auto w-full max-w-5xl px-6 py-10">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300/80">Workout Logger</p>
+        <h1 className="mt-3 text-4xl font-bold text-white">Build Strength, Set by Set</h1>
+        <p className="mt-2 max-w-2xl text-zinc-300">
+          Log your {splitLabel} session with precision and keep momentum every training day.
+        </p>
 
-        <div className="flex gap-2">
-          {(["push", "pull", "legs", "core"] as Split[]).map((s) => (
+        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor="session-date" className="mb-1 block text-sm text-zinc-300">
+                Session Date
+              </label>
+              <input
+                id="session-date"
+                className="rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-700/70 bg-zinc-950/60 p-1.5">
+              {(["push", "pull", "legs", "core"] as Split[]).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSplit(s)}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                    split === s
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                  }`}
+                >
+                  {s.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
             <button
-              key={s}
-              onClick={() => setSplit(s)}
-              className={`px-3 py-2 rounded-md border ${
-                split === s ? "bg-black text-white" : ""
-              }`}
+              onClick={save}
+              disabled={loading}
+              className="ml-auto rounded-md bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 px-5 py-2 font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-60"
             >
-              {s.toUpperCase()}
+              {loading ? "Saving..." : "Save Workout"}
             </button>
+          </div>
+
+          {msg && (
+            <p className={`mt-4 text-sm ${msg.toLowerCase().includes("saved") ? "text-emerald-300" : "text-red-300"}`}>
+              {msg}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-6 space-y-6">
+          {grouped.map(([muscle, list]) => (
+            <div key={muscle} className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+              <h2 className="text-lg font-semibold capitalize text-white">{muscle}</h2>
+
+              <div className="mt-4 space-y-4">
+                {list.map((ex) => (
+                  <div key={ex.id} className="rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-4">
+                    <div className="font-medium text-zinc-100">{ex.name}</div>
+
+                    {ex.metric_type === "WEIGHTED_REPS" ? (
+                      <div className="mt-3 grid gap-3">
+                        {[0, 1].map((i) => {
+                          const setIdx = i as 0 | 1;
+                          const row = weightedForm[ex.id]?.[setIdx];
+                          return (
+                            <div key={i} className="flex flex-wrap items-center gap-2">
+                              <span className="w-12 text-sm text-zinc-300">Set {i + 1}</span>
+
+                              <input
+                                className="w-24 rounded-md border border-zinc-700 bg-zinc-900 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                                placeholder="Reps"
+                                inputMode="numeric"
+                                value={row?.reps ?? ""}
+                                onChange={(e) => updateWeighted(ex.id, setIdx, { reps: e.target.value })}
+                              />
+
+                              <input
+                                className="w-28 rounded-md border border-zinc-700 bg-zinc-900 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                                placeholder="Weight"
+                                inputMode="decimal"
+                                value={row?.weight ?? ""}
+                                onChange={(e) => updateWeighted(ex.id, setIdx, { weight: e.target.value })}
+                              />
+
+                              <select
+                                className="rounded-md border border-zinc-700 bg-zinc-900 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                                value={row?.unit ?? "lb"}
+                                onChange={(e) => updateWeighted(ex.id, setIdx, { unit: e.target.value as Unit })}
+                              >
+                                <option value="lb">lb</option>
+                                <option value="kg">kg</option>
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mt-3 grid gap-3">
+                        {[0, 1].map((i) => {
+                          const setIdx = i as 0 | 1;
+                          const row = durationForm[ex.id]?.[setIdx];
+                          return (
+                            <div key={i} className="flex flex-wrap items-center gap-2">
+                              <span className="w-12 text-sm text-zinc-300">Set {i + 1}</span>
+
+                              <input
+                                className="w-40 rounded-md border border-zinc-700 bg-zinc-900 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                                placeholder="Seconds"
+                                inputMode="numeric"
+                                value={row?.seconds ?? ""}
+                                onChange={(e) => updateDuration(ex.id, setIdx, e.target.value)}
+                              />
+
+                              <span className="text-sm text-zinc-400">seconds</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
 
-        <button
-          onClick={save}
-          disabled={loading}
-          className="ml-auto px-4 py-2 rounded-md bg-black text-white disabled:opacity-60"
-        >
-          {loading ? "Saving..." : "Save"}
-        </button>
+        <p className="mt-8 text-sm text-zinc-500">
+          Tip: After saving, check Supabase tables: <span className="font-mono text-zinc-300">workout_sessions</span> and{" "}
+          <span className="font-mono text-zinc-300">workout_sets</span>.
+        </p>
       </div>
-
-      {msg && <p className="mt-4 text-sm">{msg}</p>}
-
-      <div className="mt-6 space-y-6">
-        {grouped.map(([muscle, list]) => (
-          <div key={muscle} className="rounded-xl border p-4">
-            <h2 className="text-lg font-semibold capitalize">{muscle}</h2>
-
-            <div className="mt-3 space-y-4">
-              {list.map((ex) => (
-                <div key={ex.id} className="rounded-lg border p-3">
-                  <div className="font-medium">{ex.name}</div>
-
-                  {ex.metric_type === "WEIGHTED_REPS" ? (
-                    <div className="mt-3 grid gap-3">
-                      {[0, 1].map((i) => {
-                        const setIdx = i as 0 | 1;
-                        const row = weightedForm[ex.id]?.[setIdx];
-                        return (
-                          <div key={i} className="flex flex-wrap gap-2 items-center">
-                            <span className="text-sm w-12">Set {i + 1}</span>
-
-                            <input
-                              className="border rounded-md p-2 w-24"
-                              placeholder="Reps"
-                              inputMode="numeric"
-                              value={row?.reps ?? ""}
-                              onChange={(e) => updateWeighted(ex.id, setIdx, { reps: e.target.value })}
-                            />
-
-                            <input
-                              className="border rounded-md p-2 w-28"
-                              placeholder="Weight"
-                              inputMode="decimal"
-                              value={row?.weight ?? ""}
-                              onChange={(e) => updateWeighted(ex.id, setIdx, { weight: e.target.value })}
-                            />
-
-                            <select
-                              className="border rounded-md p-2"
-                              value={row?.unit ?? "lb"}
-                              onChange={(e) => updateWeighted(ex.id, setIdx, { unit: e.target.value as Unit })}
-                            >
-                              <option value="lb">lb</option>
-                              <option value="kg">kg</option>
-                            </select>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="mt-3 grid gap-3">
-                      {[0, 1].map((i) => {
-                        const setIdx = i as 0 | 1;
-                        const row = durationForm[ex.id]?.[setIdx];
-                        return (
-                          <div key={i} className="flex flex-wrap gap-2 items-center">
-                            <span className="text-sm w-12">Set {i + 1}</span>
-
-                            <input
-                              className="border rounded-md p-2 w-40"
-                              placeholder="Seconds"
-                              inputMode="numeric"
-                              value={row?.seconds ?? ""}
-                              onChange={(e) => updateDuration(ex.id, setIdx, e.target.value)}
-                            />
-
-                            <span className="text-sm text-gray-600">(seconds)</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <p className="mt-8 text-sm text-gray-600">
-        Tip: After saving, check Supabase tables: <span className="font-mono">workout_sessions</span> and{" "}
-        <span className="font-mono">workout_sets</span>.
-      </p>
     </div>
   );
 }
