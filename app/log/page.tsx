@@ -19,6 +19,18 @@ type Exercise = {
 type WeightedSet = { reps: string; weight: string; unit: Unit };
 type DurationSet = { seconds: string };
 
+type WorkoutSetInsert = {
+  user_id: string;
+  session_id: string;
+  exercise_id: string;
+  set_number: number;
+  reps: number | null;
+  weight_input: number | null;
+  unit_input: Unit | null;
+  weight_kg: number | null;
+  duration_seconds: number | null;
+};
+
 export default function LogWorkoutPage() {
   const [split, setSplit] = useState<Split>("push");
   const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
@@ -153,7 +165,7 @@ export default function LogWorkoutPage() {
     const sessionId = sessionRow.id as string;
 
     // 2) Build sets to insert (2 sets per exercise)
-    const payload: any[] = [];
+    const payload: WorkoutSetInsert[] = [];
 
     for (const ex of exercises) {
       if (ex.metric_type === "WEIGHTED_REPS") {
@@ -275,12 +287,12 @@ export default function LogWorkoutPage() {
               />
             </div>
 
-            <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-700/70 bg-zinc-950/60 p-1.5">
+            <div className="flex w-full flex-wrap gap-2 rounded-xl border border-zinc-700/70 bg-zinc-950/60 p-1.5 sm:w-auto sm:flex-1">
               {(["push", "pull", "legs", "core"] as Split[]).map((s) => (
                 <button
                   key={s}
                   onClick={() => setSplit(s)}
-                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                     split === s
                       ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
                       : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
@@ -291,13 +303,6 @@ export default function LogWorkoutPage() {
               ))}
             </div>
 
-            <button
-              onClick={save}
-              disabled={loading}
-              className="ml-auto rounded-md bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 px-5 py-2 font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-60"
-            >
-              {loading ? "Saving..." : "Save Workout"}
-            </button>
           </div>
 
           {msg && (
@@ -384,10 +389,17 @@ export default function LogWorkoutPage() {
           ))}
         </div>
 
-        <p className="mt-8 text-sm text-zinc-500">
-          Tip: After saving, check Supabase tables: <span className="font-mono text-zinc-300">workout_sessions</span> and{" "}
-          <span className="font-mono text-zinc-300">workout_sets</span>.
-        </p>
+        <div className="mt-8 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+          <div className="flex justify-center">
+            <button
+              onClick={save}
+              disabled={loading}
+              className="rounded-md bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 px-5 py-2 font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-60"
+            >
+              {loading ? "Saving..." : "Save Workout"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -28,6 +28,11 @@ type PendingOverwrite = {
   inputUnit: Unit;
 };
 
+type PendingDelete = {
+  id: string | number;
+  logDate: string;
+};
+
 type ChartRange = "biweekly" | "1m" | "3m" | "6m" | "1y";
 
 export default function BodyweightPage() {
@@ -46,6 +51,7 @@ export default function BodyweightPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [pendingOverwrite, setPendingOverwrite] = useState<PendingOverwrite | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(5);
   const [historyFilterMode, setHistoryFilterMode] = useState<"single" | "range">("range");
   const [historySingleDate, setHistorySingleDate] = useState(today);
@@ -239,6 +245,49 @@ export default function BodyweightPage() {
   function cancelReplace() {
     setPendingOverwrite(null);
     setMsg("Update cancelled.");
+  }
+
+  function requestDeleteLog(log: BodyweightLog) {
+    setPendingDelete({ id: log.id, logDate: log.log_date });
+  }
+
+  async function confirmDeleteLog() {
+    if (!pendingDelete) return;
+
+    const target = pendingDelete;
+    setPendingDelete(null);
+    setLoading(true);
+    setMsg(null);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      setMsg("Not logged in.");
+      setLoading(false);
+      return;
+    }
+
+    const userId = sessionData.session.user.id;
+
+    const { error } = await supabase
+      .from("bodyweight_logs")
+      .delete()
+      .eq("id", target.id)
+      .eq("user_id", userId);
+
+    if (error) {
+      setMsg(error.message);
+      setLoading(false);
+      return;
+    }
+
+    setMsg("Deleted 🗑️");
+    setLoading(false);
+    loadLogs();
+  }
+
+  function cancelDeleteLog() {
+    setPendingDelete(null);
+    setMsg("Delete cancelled.");
   }
 
   return (
@@ -556,9 +605,19 @@ export default function BodyweightPage() {
                 className="flex items-center justify-between rounded-xl border border-zinc-700/80 bg-zinc-950/60 px-4 py-3"
               >
                 <span className="text-sm text-zinc-300">{l.log_date}</span>
-                <span className="font-medium text-white">
-                  {formatWeight(Number(l.weight_kg || 0), displayUnit)} {displayUnit}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="font-medium text-white">
+                    {formatWeight(Number(l.weight_kg || 0), displayUnit)} {displayUnit}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => requestDeleteLog(l)}
+                    disabled={loading}
+                    className="rounded-md border border-red-400/60 px-2 py-1 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
 
@@ -612,6 +671,35 @@ export default function BodyweightPage() {
                 className="rounded-md bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:brightness-110"
               >
                 Replace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Confirm Delete</p>
+            <h3 className="mt-2 text-xl font-semibold text-white">Delete bodyweight log?</h3>
+            <p className="mt-2 text-sm text-zinc-300">
+              This will remove your entry for <span className="font-semibold text-white">{pendingDelete.logDate}</span> from history and charts.
+            </p>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelDeleteLog}
+                className="rounded-md border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteLog()}
+                className="rounded-md bg-gradient-to-r from-red-400 via-rose-400 to-orange-400 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:brightness-110"
+              >
+                Delete
               </button>
             </div>
           </div>
