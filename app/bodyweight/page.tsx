@@ -28,6 +28,8 @@ type PendingOverwrite = {
   inputUnit: Unit;
 };
 
+type ChartRange = "biweekly" | "1m" | "3m" | "6m" | "1y";
+
 export default function BodyweightPage() {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -37,7 +39,8 @@ export default function BodyweightPage() {
 
   const [weight, setWeight] = useState("");
   const [unit, setUnit] = useState<Unit>("lb");
-  const [displayUnit, setDisplayUnit] = useState<Unit>("kg");
+  const [displayUnit, setDisplayUnit] = useState<Unit>("lb");
+  const [chartRange, setChartRange] = useState<ChartRange>("biweekly");
 
   const [logs, setLogs] = useState<BodyweightLog[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -89,7 +92,7 @@ export default function BodyweightPage() {
     ? formatWeight(Number(avgKg), displayUnit)
     : null;
 
-  const chartData = [...logs]
+  const fullChartData = [...logs]
     .sort((a, b) => a.log_date.localeCompare(b.log_date))
     .map((log) => {
       const date = new Date(`${log.log_date}T00:00:00`);
@@ -102,6 +105,22 @@ export default function BodyweightPage() {
         weight: Number(formatWeight(Number(log.weight_kg || 0), displayUnit)),
       };
     });
+
+  const chartDaysByRange: Record<ChartRange, number> = {
+    biweekly: 14,
+    "1m": 30,
+    "3m": 90,
+    "6m": 180,
+    "1y": 365,
+  };
+
+  const rangeDays = chartDaysByRange[chartRange];
+  const rangeStartDate = new Date();
+  rangeStartDate.setHours(0, 0, 0, 0);
+  rangeStartDate.setDate(rangeStartDate.getDate() - rangeDays + 1);
+  const rangeStartIso = rangeStartDate.toISOString().slice(0, 10);
+
+  const chartData = fullChartData.filter((point) => point.logDate >= rangeStartIso);
 
   const chartWeights = chartData.map((d) => d.weight);
   const minWeight = chartWeights.length ? Math.min(...chartWeights) : 0;
@@ -284,10 +303,63 @@ export default function BodyweightPage() {
             </div>
           </div>
 
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => setChartRange("biweekly")}
+              className={`rounded-md px-3 py-1 text-sm transition ${
+                chartRange === "biweekly"
+                  ? "bg-amber-300 text-zinc-900"
+                  : "border border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              Biweekly
+            </button>
+            <button
+              onClick={() => setChartRange("1m")}
+              className={`rounded-md px-3 py-1 text-sm transition ${
+                chartRange === "1m"
+                  ? "bg-amber-300 text-zinc-900"
+                  : "border border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              1M
+            </button>
+            <button
+              onClick={() => setChartRange("3m")}
+              className={`rounded-md px-3 py-1 text-sm transition ${
+                chartRange === "3m"
+                  ? "bg-amber-300 text-zinc-900"
+                  : "border border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              3M
+            </button>
+            <button
+              onClick={() => setChartRange("6m")}
+              className={`rounded-md px-3 py-1 text-sm transition ${
+                chartRange === "6m"
+                  ? "bg-amber-300 text-zinc-900"
+                  : "border border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              6M
+            </button>
+            <button
+              onClick={() => setChartRange("1y")}
+              className={`rounded-md px-3 py-1 text-sm transition ${
+                chartRange === "1y"
+                  ? "bg-amber-300 text-zinc-900"
+                  : "border border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              1Y
+            </button>
+          </div>
+
           <div className="mt-4 h-72 w-full">
             {chartData.length === 0 ? (
               <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
-                No entries yet. Log your first bodyweight to see the trend.
+                No entries in this selected range.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
