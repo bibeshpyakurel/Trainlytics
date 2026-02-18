@@ -23,7 +23,9 @@ import {
 } from "@/features/calories/view";
 import { formatCalories, getTotalCalories } from "@/features/calories/utils";
 import {
+  Area,
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -154,11 +156,23 @@ export default function CaloriesPage() {
       postWorkoutKcal: postValue,
     };
 
-    const hasEntryForDate = logs.some((log) => log.log_date === date);
-    if (hasEntryForDate) {
-      setPendingOverwrite(payload);
-      setLoading(false);
-      return;
+    const existingLog = logs.find((log) => log.log_date === date);
+    if (existingLog) {
+      payload.preWorkoutKcal = hasPreValue ? preValue : existingLog.pre_workout_kcal;
+      payload.postWorkoutKcal = hasPostValue ? postValue : existingLog.post_workout_kcal;
+
+      const shouldConfirmPre = hasPreValue && existingLog.pre_workout_kcal != null;
+      const shouldConfirmPost = hasPostValue && existingLog.post_workout_kcal != null;
+
+      if (shouldConfirmPre || shouldConfirmPost) {
+        setPendingOverwrite({
+          ...payload,
+          replacePre: shouldConfirmPre,
+          replacePost: shouldConfirmPost,
+        });
+        setLoading(false);
+        return;
+      }
     }
 
     await persistCaloriesEntry(payload);
@@ -341,6 +355,17 @@ export default function CaloriesPage() {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                  <defs>
+                    <linearGradient id="caloriesTotalAreaFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.38} />
+                      <stop offset="55%" stopColor="#f59e0b" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="caloriesTotalStroke" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#f59e0b" />
+                      <stop offset="100%" stopColor="#ef4444" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
                   <XAxis
                     dataKey="label"
@@ -362,16 +387,61 @@ export default function CaloriesPage() {
                       borderRadius: "10px",
                     }}
                     labelStyle={{ color: "#e4e4e7" }}
-                    formatter={(value: number | string | undefined) => {
+                    formatter={(value: number | string | undefined, name: string | number) => {
                       const numericValue = typeof value === "number" ? value : Number(value ?? 0);
-                      return [`${formatCalories(numericValue)} kcal`, "Total"] as const;
+                      const labelByKey: Record<string, string> = {
+                        total: "Total",
+                        preWorkout: "Pre",
+                        postWorkout: "Post",
+                      };
+                      const key = String(name);
+                      return [`${formatCalories(numericValue)} kcal`, labelByKey[key] ?? key] as const;
                     }}
                     labelFormatter={(label, payload) => {
                       const logDate = payload?.[0]?.payload?.logDate;
                       return logDate || label;
                     }}
                   />
-                  <Line type="monotone" dataKey="total" stroke="#fcd34d" strokeWidth={3} dot={{ r: 3 }} />
+                  <Legend
+                    verticalAlign="top"
+                    height={28}
+                    formatter={(value: string) => {
+                      const labelByKey: Record<string, string> = {
+                        total: "Total",
+                        preWorkout: "Pre",
+                        postWorkout: "Post",
+                      };
+                      return labelByKey[value] ?? value;
+                    }}
+                    wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }}
+                  />
+                  <Area type="monotone" dataKey="total" fill="url(#caloriesTotalAreaFill)" stroke="none" />
+                  <Line
+                    type="monotone"
+                    dataKey="preWorkout"
+                    stroke="#34d399"
+                    strokeWidth={2}
+                    strokeDasharray="5 3"
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="postWorkout"
+                    stroke="#60a5fa"
+                    strokeWidth={2}
+                    strokeDasharray="5 3"
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    stroke="url(#caloriesTotalStroke)"
+                    strokeWidth={3}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             )}
@@ -574,9 +644,15 @@ export default function CaloriesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Confirm Replace</p>
-            <h3 className="mt-2 text-xl font-semibold text-white">Replace existing calories log?</h3>
+            <h3 className="mt-2 text-xl font-semibold text-white">Replace existing calories value?</h3>
             <p className="mt-2 text-sm text-zinc-300">
-              You already have an entry for <span className="font-semibold text-white">{pendingOverwrite.logDate}</span>. Do you want to replace it with this new value?
+              You already have {pendingOverwrite.replacePre && pendingOverwrite.replacePost
+                ? "pre-workout and post-workout calories"
+                : pendingOverwrite.replacePre
+                  ? "a pre-workout calories"
+                  : "a post-workout calories"} for <span className="font-semibold text-white">{pendingOverwrite.logDate}</span>. Do you want to replace {pendingOverwrite.replacePre && pendingOverwrite.replacePost
+                ? "them"
+                : "it"}?
             </p>
 
             <div className="mt-5 flex items-center justify-end gap-2">

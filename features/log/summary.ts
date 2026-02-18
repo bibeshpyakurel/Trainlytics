@@ -18,6 +18,9 @@ export function sortSessionSummaryItems(items: SessionSummaryItem[], split: Spli
     pull: [
       "bendover barbell row",
       "bent over barbell row",
+      "diverging low row",
+      "pull up",
+      "pull-up",
       "hammer",
       "upper back row",
       "preacher",

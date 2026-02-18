@@ -10,6 +10,8 @@ export type PendingOverwrite = {
   logDate: string;
   preWorkoutKcal: number | null;
   postWorkoutKcal: number | null;
+  replacePre?: boolean;
+  replacePost?: boolean;
 };
 
 export type PendingDelete = {

@@ -20,6 +20,14 @@ export type PendingDelete = {
   logDate: string;
 };
 
+export type PendingEdit = {
+  id: string | number;
+  originalLogDate: string;
+  newLogDate: string;
+  weight: string;
+  unit: Unit;
+};
+
 export type ChartRange = "biweekly" | "1m" | "3m" | "6m" | "1y";
 
 export type HistoryFilterMode = "single" | "range";

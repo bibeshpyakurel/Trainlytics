@@ -7,6 +7,7 @@ import type {
   ChartRange,
   HistoryFilterMode,
   PendingDelete,
+  PendingEdit,
   PendingOverwrite,
 } from "@/features/bodyweight/types";
 import { formatWeightFromKg } from "@/features/bodyweight/utils";
@@ -14,6 +15,7 @@ import {
   deleteBodyweightLogForCurrentUser,
   getCurrentUserId,
   loadBodyweightLogsForCurrentUser,
+  updateBodyweightLogForCurrentUser,
   upsertBodyweightEntry,
 } from "@/features/bodyweight/service";
 import {
@@ -22,6 +24,7 @@ import {
   getBodyweightSummary,
 } from "@/features/bodyweight/view";
 import {
+  Area,
   CartesianGrid,
   Line,
   LineChart,
@@ -48,6 +51,7 @@ export default function BodyweightPage() {
   const [loading, setLoading] = useState(false);
   const [pendingOverwrite, setPendingOverwrite] = useState<PendingOverwrite | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(5);
   const [historyFilterMode, setHistoryFilterMode] = useState<HistoryFilterMode>("range");
   const [historySingleDate, setHistorySingleDate] = useState(today);
@@ -202,6 +206,56 @@ export default function BodyweightPage() {
     setMsg("Delete cancelled.");
   }
 
+  function requestEditLog(log: BodyweightLog) {
+    setPendingEdit({
+      id: log.id,
+      originalLogDate: log.log_date,
+      newLogDate: log.log_date,
+      weight: String(log.weight_input),
+      unit: log.unit_input,
+    });
+  }
+
+  function cancelEditLog() {
+    setPendingEdit(null);
+    setMsg("Edit cancelled.");
+  }
+
+  async function confirmEditLog() {
+    if (!pendingEdit) return;
+
+    if (pendingEdit.newLogDate > today) {
+      setMsg("Future log dates are not allowed.");
+      return;
+    }
+
+    const weightNum = Number(pendingEdit.weight);
+    if (!Number.isFinite(weightNum) || weightNum <= 0) {
+      setMsg("Enter valid weight.");
+      return;
+    }
+
+    setLoading(true);
+    setMsg(null);
+
+    const error = await updateBodyweightLogForCurrentUser(pendingEdit.id, {
+      logDate: pendingEdit.newLogDate,
+      weightNum,
+      inputUnit: pendingEdit.unit,
+    });
+
+    if (error) {
+      setLoading(false);
+      setMsg(error);
+      return;
+    }
+
+    setPendingEdit(null);
+    setLoading(false);
+    setMsg("Updated bodyweight log ✅");
+    void loadLogs();
+  }
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
       <div className="pointer-events-none absolute inset-0">
@@ -325,6 +379,18 @@ export default function BodyweightPage() {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                  <defs>
+                    <linearGradient id="bodyweightAreaFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.45} />
+                      <stop offset="55%" stopColor="#f59e0b" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="bodyweightLineStroke" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#22d3ee" />
+                      <stop offset="55%" stopColor="#f59e0b" />
+                      <stop offset="100%" stopColor="#f97316" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
                   <XAxis
                     dataKey="label"
@@ -361,13 +427,19 @@ export default function BodyweightPage() {
                       return logDate || label;
                     }}
                   />
+                  <Area
+                    type="monotone"
+                    dataKey="weight"
+                    fill="url(#bodyweightAreaFill)"
+                    stroke="none"
+                  />
                   <Line
                     type="monotone"
                     dataKey="weight"
-                    stroke="#fcd34d"
+                    stroke="url(#bodyweightLineStroke)"
                     strokeWidth={3}
-                    dot={{ r: 3, fill: "#fcd34d" }}
-                    activeDot={{ r: 5 }}
+                    dot={{ r: 3, fill: "#22d3ee", stroke: "#0f172a", strokeWidth: 1 }}
+                    activeDot={{ r: 6, fill: "#f59e0b", stroke: "#0f172a", strokeWidth: 1 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -523,6 +595,14 @@ export default function BodyweightPage() {
                   </span>
                   <button
                     type="button"
+                    onClick={() => requestEditLog(l)}
+                    disabled={loading}
+                    className="rounded-md border border-zinc-500/70 px-2 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/40 disabled:opacity-50"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => requestDeleteLog(l)}
                     disabled={loading}
                     className="rounded-md border border-red-400/60 px-2 py-1 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
@@ -612,6 +692,100 @@ export default function BodyweightPage() {
                 className="rounded-md bg-gradient-to-r from-red-400 via-rose-400 to-orange-400 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:brightness-110"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Edit Bodyweight Log</p>
+            <h3 className="mt-2 text-xl font-semibold text-white">Update date and weight</h3>
+            <p className="mt-2 text-sm text-zinc-300">
+              Adjust this entry while keeping your progress history accurate.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label htmlFor="edit-bodyweight-date" className="mb-1 block text-sm text-zinc-300">Date</label>
+                <input
+                  id="edit-bodyweight-date"
+                  type="date"
+                  value={pendingEdit.newLogDate}
+                  max={today}
+                  onChange={(e) =>
+                    setPendingEdit((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            newLogDate: e.target.value,
+                          }
+                        : prev
+                    )
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="edit-bodyweight-weight" className="mb-1 block text-sm text-zinc-300">Weight</label>
+                <input
+                  id="edit-bodyweight-weight"
+                  value={pendingEdit.weight}
+                  onChange={(e) =>
+                    setPendingEdit((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            weight: e.target.value,
+                          }
+                        : prev
+                    )
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="edit-bodyweight-unit" className="mb-1 block text-sm text-zinc-300">Unit</label>
+                <select
+                  id="edit-bodyweight-unit"
+                  value={pendingEdit.unit}
+                  onChange={(e) =>
+                    setPendingEdit((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            unit: e.target.value as Unit,
+                          }
+                        : prev
+                    )
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                >
+                  <option value="lb">lb</option>
+                  <option value="kg">kg</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelEditLog}
+                className="rounded-md border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmEditLog()}
+                disabled={loading}
+                className="rounded-md bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-60"
+              >
+                Save Changes
               </button>
             </div>
           </div>

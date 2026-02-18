@@ -80,3 +80,34 @@ export async function deleteBodyweightLogForCurrentUser(
 
   return { deleted: true, error: null };
 }
+
+export async function updateBodyweightLogForCurrentUser(
+  logId: string | number,
+  payload: {
+    logDate: string;
+    weightNum: number;
+    inputUnit: "lb" | "kg";
+  }
+): Promise<string | null> {
+  const { userId, error: userError } = await getCurrentUserId();
+  if (userError) {
+    return userError;
+  }
+
+  if (!userId) {
+    return "Not logged in.";
+  }
+
+  const { error } = await supabase
+    .from("bodyweight_logs")
+    .update({
+      log_date: payload.logDate,
+      weight_input: payload.weightNum,
+      unit_input: payload.inputUnit,
+      weight_kg: toKg(payload.weightNum, payload.inputUnit),
+    })
+    .eq("id", logId)
+    .eq("user_id", userId);
+
+  return error ? error.message : null;
+}
