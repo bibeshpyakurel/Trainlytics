@@ -136,7 +136,7 @@ export default function ProfilePage() {
       return;
     }
 
-    router.replace(ROUTES.login);
+    router.replace(ROUTES.signout);
   }
 
   async function saveName() {

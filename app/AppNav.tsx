@@ -11,7 +11,7 @@ import { ROUTES } from "@/lib/routes";
 export default function AppNav() {
   const pathname = usePathname();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const hideNav = pathname === ROUTES.login || pathname === ROUTES.launch;
+  const hideNav = pathname === ROUTES.login || pathname === ROUTES.launch || pathname === ROUTES.signout;
 
   useEffect(() => {
     if (hideNav) return;
