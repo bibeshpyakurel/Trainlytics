@@ -1028,11 +1028,6 @@ export default function LogWorkoutPage() {
               {loading ? "Saving..." : "Save Workout"}
             </button>
           </div>
-          {!hasAtLeastOneCompleteSet && (
-            <p className="mt-3 text-center text-xs text-zinc-400">
-              Enter at least one complete set (reps + weight, or duration) to enable Save Workout.
-            </p>
-          )}
         </div>
 
         <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
