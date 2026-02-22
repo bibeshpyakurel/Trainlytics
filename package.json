@@ -12,6 +12,7 @@
     "check": "npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.95.3",
     "buffer": "^6.0.3",
     "next": "16.1.6",

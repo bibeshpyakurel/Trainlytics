@@ -2,6 +2,7 @@ export const STORAGE_KEYS = {
   theme: "theme",
   launchAnimationEnabled: "launch_animation_enabled",
   insightsSpeakReplies: "insights_speak_replies",
+  recentLoginEmails: "recent_login_emails",
 } as const;
 
 export function getStoredBoolean(key: string, defaultValue: boolean): boolean {

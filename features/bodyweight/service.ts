@@ -2,21 +2,20 @@ import { toKg } from "@/lib/convertWeight";
 import { supabase } from "@/lib/supabaseClient";
 import type { BodyweightLog, PendingOverwrite } from "@/features/bodyweight/types";
 import { TABLES } from "@/lib/dbNames";
+import { getCurrentUserIdFromSession } from "@/lib/authSession";
 
 export async function loadBodyweightLogsForCurrentUser(): Promise<{
   logs: BodyweightLog[];
   error: string | null;
 }> {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) {
-    return { logs: [], error: sessionError.message };
+  const { userId, error: userError } = await getCurrentUserIdFromSession();
+  if (userError) {
+    return { logs: [], error: userError };
   }
 
-  if (!sessionData.session) {
+  if (!userId) {
     return { logs: [], error: null };
   }
-
-  const userId = sessionData.session.user.id;
 
   const { data, error } = await supabase
     .from(TABLES.bodyweightLogs)
@@ -49,12 +48,7 @@ export async function upsertBodyweightEntry(payload: PendingOverwrite): Promise<
 }
 
 export async function getCurrentUserId(): Promise<{ userId: string | null; error: string | null }> {
-  const { data: sessionData, error } = await supabase.auth.getSession();
-  if (error) {
-    return { userId: null, error: error.message };
-  }
-
-  return { userId: sessionData.session?.user.id ?? null, error: null };
+  return getCurrentUserIdFromSession();
 }
 
 export async function deleteBodyweightLogForCurrentUser(

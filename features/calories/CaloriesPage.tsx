@@ -22,6 +22,7 @@ import {
   getCaloriesSummary,
 } from "@/features/calories/view";
 import { formatCalories, getTotalCalories } from "@/features/calories/utils";
+import { toLocalIsoDate } from "@/lib/localDate";
 import {
   Area,
   CartesianGrid,
@@ -35,7 +36,7 @@ import {
 } from "recharts";
 
 export default function CaloriesPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalIsoDate();
 
   const [date, setDate] = useState(today);
   const [preWorkoutCalories, setPreWorkoutCalories] = useState("");

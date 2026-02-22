@@ -4,19 +4,46 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { APP_COPY } from "@/lib/appCopy";
 import { ROUTES } from "@/lib/routes";
+import { supabase } from "@/lib/supabaseClient";
+import { clearAccountScopedClientState } from "@/lib/accountScopedClientState";
 
 export default function SignOutPage() {
   const router = useRouter();
   const visible = true;
   const [exiting, setExiting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(true);
 
   useEffect(() => {
-    const exitTimer = window.setTimeout(() => setExiting(true), 900);
-    const routeTimer = window.setTimeout(() => router.replace(ROUTES.login), 1400);
+    let isMounted = true;
+    let exitTimer: number | null = null;
+    let routeTimer: number | null = null;
+
+    async function runSignOut() {
+      setIsSigningOut(true);
+      setErrorMessage(null);
+
+      const { error } = await supabase.auth.signOut();
+      if (!isMounted) return;
+
+      if (error) {
+        setIsSigningOut(false);
+        setErrorMessage(`Sign out failed: ${error.message}`);
+        return;
+      }
+
+      clearAccountScopedClientState();
+      setIsSigningOut(false);
+      exitTimer = window.setTimeout(() => setExiting(true), 700);
+      routeTimer = window.setTimeout(() => router.replace(ROUTES.login), 1200);
+    }
+
+    runSignOut();
 
     return () => {
-      window.clearTimeout(exitTimer);
-      window.clearTimeout(routeTimer);
+      isMounted = false;
+      if (exitTimer) window.clearTimeout(exitTimer);
+      if (routeTimer) window.clearTimeout(routeTimer);
     };
   }, [router]);
 
@@ -47,8 +74,20 @@ export default function SignOutPage() {
             visible && !exiting ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
           }`}
         >
-          Signed out successfully.
+          {isSigningOut ? "Signing you out..." : "Signed out successfully."}
         </p>
+        {errorMessage && (
+          <div className="mt-5 space-y-3">
+            <p className="text-sm text-red-300">{errorMessage}</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
+            >
+              Retry sign out
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

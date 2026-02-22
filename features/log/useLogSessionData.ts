@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Unit } from "@/lib/convertWeight";
 import { supabase } from "@/lib/supabaseClient";
+import { getCurrentSessionUser } from "@/lib/authSession";
 import { TABLES } from "@/lib/dbNames";
+import { ensureDefaultExercisesForUser } from "@/lib/defaultExercises";
 import { getDaysAgo, makeSetKey } from "@/features/log/formatters";
 import type {
   DurationSet,
@@ -51,13 +53,13 @@ export function useLogSessionData({
   >({});
 
   const loadLastSessions = useCallback(async () => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData.session) {
+    const authState = await getCurrentSessionUser();
+    if (authState.status !== "ok") {
       setLastSessionBySplit({});
       return;
     }
 
-    const userId = sessionData.session.user.id;
+    const userId = authState.userId;
 
     const { data, error } = await supabase
       .from(TABLES.workoutSessions)
@@ -81,13 +83,13 @@ export function useLogSessionData({
   }, []);
 
   const loadRecentSessions = useCallback(async () => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData.session) {
+    const authState = await getCurrentSessionUser();
+    if (authState.status !== "ok") {
       setRecentSessions([]);
       return;
     }
 
-    const userId = sessionData.session.user.id;
+    const userId = authState.userId;
     const { data, error } = await supabase
       .from(TABLES.workoutSessions)
       .select("id,split,session_date")
@@ -111,9 +113,23 @@ export function useLogSessionData({
       void loadLastSessions();
       void loadRecentSessions();
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
+      const authState = await getCurrentSessionUser();
+      if (authState.status === "error") {
+        setMsg(`Error checking session: ${authState.message}`);
+        setExercises([]);
+        return;
+      }
+
+      if (authState.status === "unauthenticated") {
         setMsg("Not logged in. Go to /login first.");
+        setExercises([]);
+        return;
+      }
+
+      const userId = authState.userId;
+      const seedError = await ensureDefaultExercisesForUser(userId);
+      if (seedError) {
+        setMsg(`Error preparing default exercises: ${seedError}`);
         setExercises([]);
         return;
       }
@@ -121,9 +137,11 @@ export function useLogSessionData({
       const { data, error } = await supabase
         .from(TABLES.exercises)
         .select("id,name,split,muscle_group,metric_type,sort_order")
+        .eq("user_id", userId)
         .eq("split", split)
         .eq("is_active", true)
-        .order("sort_order");
+        .order("sort_order")
+        .order("name");
 
       if (error) {
         setMsg(`Error loading exercises: ${error.message}`);
@@ -148,7 +166,7 @@ export function useLogSessionData({
         const { data: priorSessions, error: priorSessionsError } = await supabase
           .from(TABLES.workoutSessions)
           .select("id,session_date")
-          .eq("user_id", sessionData.session.user.id)
+          .eq("user_id", userId)
           .eq("split", split)
           .lt("session_date", date)
           .order("session_date", { ascending: false })
@@ -166,7 +184,7 @@ export function useLogSessionData({
           const { data: priorSetRows, error: priorSetRowsError } = await supabase
             .from(TABLES.workoutSets)
             .select("session_id,exercise_id,set_number,reps,weight_input,unit_input,duration_seconds")
-            .eq("user_id", sessionData.session.user.id)
+            .eq("user_id", userId)
             .in("session_id", priorSessionIds)
             .in("exercise_id", trackedExerciseIds);
 
@@ -243,7 +261,7 @@ export function useLogSessionData({
       const { data: existingSession } = await supabase
         .from(TABLES.workoutSessions)
         .select("id")
-        .eq("user_id", sessionData.session.user.id)
+        .eq("user_id", userId)
         .eq("session_date", date)
         .eq("split", split)
         .maybeSingle();

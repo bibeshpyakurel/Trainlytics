@@ -87,8 +87,34 @@ export default function LogWorkoutPage() {
       const key = ex.muscle_group;
       map.set(key, [...(map.get(key) ?? []), ex]);
     }
-    return Array.from(map.entries());
-  }, [exercises]);
+
+    const muscleGroupOrderBySplit: Record<Split, string[]> = {
+      push: ["chest", "shoulders", "triceps"],
+      pull: ["back", "biceps"],
+      legs: ["quads", "hamstrings", "calves"],
+      core: ["core"],
+    };
+
+    const normalize = (value: string) => value.trim().toLowerCase();
+    const orderList = muscleGroupOrderBySplit[split].map(normalize);
+    const groupOrder = new Map<string, number>(orderList.map((name, index) => [name, index]));
+
+    return Array.from(map.entries())
+      .map(([groupName, items]) => {
+        const sortedItems = [...items].sort((a, b) => {
+          if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+          return a.name.localeCompare(b.name);
+        });
+
+        return [groupName, sortedItems] as const;
+      })
+      .sort(([a], [b]) => {
+        const aIdx = groupOrder.get(normalize(a)) ?? Number.MAX_SAFE_INTEGER;
+        const bIdx = groupOrder.get(normalize(b)) ?? Number.MAX_SAFE_INTEGER;
+        if (aIdx !== bIdx) return aIdx - bIdx;
+        return a.localeCompare(b);
+      });
+  }, [exercises, split]);
 
   const splitLabel = split.charAt(0).toUpperCase() + split.slice(1);
   const selectedLastSession = lastSessionBySplit[split];

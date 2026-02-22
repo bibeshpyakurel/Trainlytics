@@ -64,6 +64,53 @@ This creates:
 - Public storage bucket `profile-avatars`
 - Storage policies so each user can upload/update/delete only their own avatar files
 
+## Auth flow contract
+
+Current decision (February 21, 2026): ship **email/password only** for now.
+
+- In scope now:
+  - `supabase.auth.signInWithPassword`
+  - session-based access for app pages
+  - explicit sign out flow
+- Out of scope for this phase:
+  - magic link login
+  - OAuth providers (Google, Apple, etc.)
+
+Route access contract:
+
+- Public routes:
+  - `/login`
+- Protected routes (require active session):
+  - `/launch`
+  - `/dashboard`
+  - `/insights`
+  - `/log`
+  - `/bodyweight`
+  - `/calories`
+  - `/profile`
+
+Implementation note:
+
+- Route sets and helpers are centralized in `lib/routes.ts` via:
+  - `PUBLIC_ROUTES`
+  - `PROTECTED_ROUTES`
+  - `isPublicRoute(pathname)`
+  - `isProtectedRoute(pathname)`
+
+### Optional server-side account checks
+
+To show explicit messages like:
+- "No account exists with this email"
+- "Wrong email or password"
+
+and to validate forgot-password email existence, add:
+
+```bash
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+```
+
+This key is used only by server routes (never exposed to browser code).
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

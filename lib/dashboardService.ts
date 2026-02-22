@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { getCurrentSessionUser } from "@/lib/authSession";
 import {
   buildMuscleGroupStrengthDatasets,
   buildStrengthProgressDatasets,
@@ -19,17 +20,16 @@ export type DashboardLoadResult =
 const DEFAULT_STRENGTH_AGGREGATION_MODE: StrengthAggregationMode = "sum";
 
 export async function loadDashboardData(): Promise<DashboardLoadResult> {
-  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-  if (sessionErr) {
-    return { status: "error", message: sessionErr.message };
+  const authState = await getCurrentSessionUser();
+  if (authState.status === "error") {
+    return { status: "error", message: authState.message };
   }
 
-  if (!sessionData.session) {
+  if (authState.status === "unauthenticated") {
     return { status: "unauthenticated" };
   }
 
-  const user = sessionData.session.user;
-  const userId = user.id;
+  const { user, userId } = authState;
 
   const [
     latestWorkoutRes,

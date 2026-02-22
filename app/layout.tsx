@@ -11,8 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `(() => {
   try {
     const savedTheme = localStorage.getItem("${STORAGE_KEYS.theme}");
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const isDark = savedTheme ? savedTheme === "dark" : prefersDark;
+    const isDark = savedTheme ? savedTheme === "dark" : true;
     const root = document.documentElement;
     root.classList.toggle("dark", isDark);
     root.style.colorScheme = isDark ? "dark" : "light";

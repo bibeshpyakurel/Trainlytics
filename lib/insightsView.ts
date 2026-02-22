@@ -4,6 +4,7 @@ import type {
   InsightFact,
   InsightMetricPoint,
 } from "@/lib/insightsTypes";
+import { getLocalIsoDateDaysAgo } from "@/lib/localDate";
 
 type BuildInsightsViewInput = {
   bodyweightSeries: InsightMetricPoint[];
@@ -98,13 +99,9 @@ function correlationInterpretation(value: number | null): string {
 
 function getLastNDatesSet(days: number): Set<string> {
   const dates = new Set<string>();
-  const current = new Date();
-  current.setHours(0, 0, 0, 0);
 
   for (let index = 0; index < days; index += 1) {
-    const date = new Date(current);
-    date.setDate(current.getDate() - index);
-    dates.add(date.toISOString().slice(0, 10));
+    dates.add(getLocalIsoDateDaysAgo(index));
   }
 
   return dates;

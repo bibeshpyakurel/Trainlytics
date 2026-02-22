@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { getCurrentSessionUser } from "@/lib/authSession";
 import {
   aggregateSessionStrengthByDate,
   computeSessionStrengthByExerciseDate,
@@ -10,17 +11,16 @@ import { toKg } from "@/lib/convertWeight";
 import { TABLES } from "@/lib/dbNames";
 
 export async function loadInsightsData(): Promise<InsightsLoadResult> {
-  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-  if (sessionErr) {
-    return { status: "error", message: sessionErr.message };
+  const authState = await getCurrentSessionUser();
+  if (authState.status === "error") {
+    return { status: "error", message: authState.message };
   }
 
-  if (!sessionData.session) {
+  if (authState.status === "unauthenticated") {
     return { status: "unauthenticated" };
   }
 
-  const user = sessionData.session.user;
-  const userId = user.id;
+  const { user, userId } = authState;
 
   const [bodyweightRes, caloriesRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
     supabase

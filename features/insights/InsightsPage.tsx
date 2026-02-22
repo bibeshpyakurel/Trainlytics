@@ -15,7 +15,7 @@ import {
 import { loadInsightsData } from "@/lib/insightsService";
 import type { InsightsData } from "@/lib/insightsTypes";
 import { STORAGE_KEYS } from "@/lib/preferences";
-import { API_ROUTES, ROUTES } from "@/lib/routes";
+import { API_ROUTES, ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 
 type AssistantMessage = { role: "user" | "assistant"; text: string };
 
@@ -66,7 +66,7 @@ export default function InsightsPage() {
       if (result.status === "unauthenticated") {
         setMsg("You are not logged in.");
         setLoading(false);
-        router.replace(ROUTES.login);
+        router.replace(buildLoginRedirectPath(ROUTES.insights, "session_expired"));
         return;
       }
 

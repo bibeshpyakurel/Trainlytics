@@ -1,19 +1,103 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { APP_COPY } from "@/lib/appCopy";
 import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, getDefaultSignedInRoute, getSafeProtectedNextRoute } from "@/lib/routes";
+import {
+  getRecentLoginEmails,
+  rememberRecentLoginEmail,
+  removeRecentLoginEmail,
+} from "@/lib/recentLoginEmails";
+import { toFriendlyLoginReason, toFriendlySignInErrorMessage } from "@/lib/authErrors";
+
+function isInvalidCredentialsError(message: string) {
+  const text = message.toLowerCase();
+  return (
+    text.includes("invalid login credentials") ||
+    text.includes("invalid email or password") ||
+    text.includes("invalid credentials")
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextParam = searchParams.get("next");
+  const reasonParam = searchParams.get("reason");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [recentEmails, setRecentEmails] = useState<string[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      setRecentEmails(getRecentLoginEmails());
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    let timeoutId: number | null = null;
+
+    (async () => {
+      timeoutId = window.setTimeout(() => {
+        if (!isMounted) return;
+        setCheckingSession(false);
+      }, 3000);
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (!isMounted) return;
+
+      if (sessionError) {
+        setCheckingSession(false);
+        setMsg("Could not verify your session. Please sign in.");
+        return;
+      }
+
+      if (!sessionData.session) {
+        const reasonMessage = toFriendlyLoginReason(reasonParam);
+        if (reasonMessage) {
+          setMsg(reasonMessage);
+        }
+        setCheckingSession(false);
+        return;
+      }
+
+      const { data, error } = await supabase.auth.getUser();
+      if (!isMounted) return;
+
+      if (error || !data.user) {
+        setCheckingSession(false);
+        setMsg("Session expired. Please sign in again.");
+        return;
+      }
+
+      if (data.user) {
+        const launchAnimationEnabled =
+          localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+        const nextRoute = getSafeProtectedNextRoute(nextParam);
+        router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
+        return;
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [nextParam, reasonParam, router]);
 
   async function signIn(e?: FormEvent<HTMLFormElement>) {
     e?.preventDefault();
@@ -27,7 +111,28 @@ export default function LoginPage() {
 
     if (error) {
       setLoading(false);
-      setMsg(`Login failed: ${error.message}`);
+      if (isInvalidCredentialsError(error.message)) {
+        try {
+          const response = await fetch("/api/auth/account-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+
+          if (response.ok) {
+            const payload = (await response.json()) as { exists?: boolean };
+            if (!payload.exists) {
+              setMsg("No account exists with this email. Please create an account first.");
+              return;
+            }
+          }
+        } catch {}
+
+        setMsg("Wrong email or password. Please try again.");
+        return;
+      }
+
+      setMsg(toFriendlySignInErrorMessage(error));
       return;
     }
 
@@ -36,17 +141,32 @@ export default function LoginPage() {
     setLoading(false);
 
     if (!hasSession) {
-      setMsg(
-        "Login call succeeded but no session returned. This usually means email confirmation is required."
-      );
+      setMsg("Sign-in succeeded but no session started. Verify your email and try again.");
       return;
     }
 
+    rememberRecentLoginEmail(email);
+    setRecentEmails(getRecentLoginEmails());
+
     const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
-    router.replace(launchAnimationEnabled ? ROUTES.launch : ROUTES.dashboard);
+    const nextRoute = getSafeProtectedNextRoute(nextParam);
+    router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
   }
 
-  const isError = !!msg?.toLowerCase().includes("failed");
+  const isError = !!msg && !msg.toLowerCase().includes("session expired") && !msg.toLowerCase().includes("sign in to continue");
+
+  function selectRecentEmail(value: string) {
+    setEmail(value);
+    setMsg(null);
+  }
+
+  function removeRecentEmail(value: string) {
+    removeRecentLoginEmail(value);
+    setRecentEmails(getRecentLoginEmails());
+    if (email.trim().toLowerCase() === value.toLowerCase()) {
+      setEmail("");
+    }
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
@@ -97,6 +217,49 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-zinc-300">
             Sign in and keep your progress moving. One workout at a time.
           </p>
+          <p className="mt-2 text-xs text-zinc-400">
+            Need a new account?{" "}
+            <Link href={ROUTES.signup} className="font-semibold text-amber-300 hover:text-amber-200">
+              Create one here
+            </Link>
+            .
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            Forgot password?{" "}
+            <Link href={ROUTES.forgotPassword} className="font-semibold text-amber-300 hover:text-amber-200">
+              Reset with OTP
+            </Link>
+            .
+          </p>
+
+          {recentEmails.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Recent accounts on this device</p>
+              <div className="mt-2 space-y-2">
+                {recentEmails.map((recentEmail) => (
+                  <div
+                    key={recentEmail}
+                    className="flex items-center justify-between rounded-lg border border-zinc-700/70 bg-zinc-900/70 px-3 py-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectRecentEmail(recentEmail)}
+                      className="text-left text-sm font-medium text-zinc-100 transition hover:text-amber-300"
+                    >
+                      {recentEmail}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeRecentEmail(recentEmail)}
+                      className="rounded-md px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={signIn} className="mt-5">
             <label htmlFor="email" className="block text-sm font-medium text-zinc-200">
@@ -116,18 +279,26 @@ export default function LoginPage() {
             <input
               id="password"
               className={`mt-1 w-full ${INPUT_BASE_CLASS}`}
-              type="password"
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
             />
+            <label className="mt-2 inline-flex items-center gap-2 text-xs text-zinc-400">
+              <input
+                type="checkbox"
+                checked={showPassword}
+                onChange={(e) => setShowPassword(e.target.checked)}
+              />
+              Show password
+            </label>
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || checkingSession}
               className="mt-5 w-full rounded-md bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 py-2 font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-60"
             >
-              {loading ? "Working..." : "Sign in"}
+              {checkingSession ? "Checking session..." : loading ? "Working..." : "Sign in"}
             </button>
 
             <p className="mt-4 text-center text-xs text-zinc-500">

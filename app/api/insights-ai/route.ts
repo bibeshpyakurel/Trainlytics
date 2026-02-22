@@ -76,8 +76,7 @@ export async function POST(request: Request) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      return jsonError(`AI provider error: ${response.status} ${errorText}`, 502);
+      return jsonError(`AI provider error: ${response.status}`, 502);
     }
 
     const data = (await response.json()) as {
