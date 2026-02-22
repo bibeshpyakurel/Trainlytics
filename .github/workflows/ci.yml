@@ -30,3 +30,6 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: DB Plan Check
+        run: npm run db:check-plan

@@ -8,6 +8,7 @@ import { APP_COPY } from "@/lib/appCopy";
 import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
 import { ROUTES, getDefaultSignedInRoute } from "@/lib/routes";
 import { STORAGE_KEYS } from "@/lib/preferences";
+import { reportClientError } from "@/lib/monitoringClient";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
@@ -96,6 +97,9 @@ export default function ForgotPasswordPage() {
         return;
       }
     } catch (error) {
+      void reportClientError("auth.forgot_password.account_status_check_failed", error, {
+        stage: "account_status_fetch",
+      });
       setLoading(false);
       showError(error instanceof Error ? error.message : "Could not verify account status. Please try again.");
       return;
@@ -111,6 +115,9 @@ export default function ForgotPasswordPage() {
     setLoading(false);
 
     if (error) {
+      void reportClientError("auth.forgot_password.send_otp_failed", error, {
+        stage: "signInWithOtp",
+      });
       showError(`Could not send OTP: ${error.message}`);
       return;
     }

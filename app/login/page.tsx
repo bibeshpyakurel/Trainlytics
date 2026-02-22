@@ -14,6 +14,7 @@ import {
   removeRecentLoginEmail,
 } from "@/lib/recentLoginEmails";
 import { toFriendlyLoginReason, toFriendlySignInErrorMessage } from "@/lib/authErrors";
+import { reportClientError } from "@/lib/monitoringClient";
 
 function isInvalidCredentialsError(message: string) {
   const text = message.toLowerCase();
@@ -61,6 +62,7 @@ export default function LoginPage() {
       if (!isMounted) return;
 
       if (sessionError) {
+        void reportClientError("auth.login.session_check_failed", sessionError, { stage: "getSession" });
         setCheckingSession(false);
         setMsg("Could not verify your session. Please sign in.");
         return;
@@ -79,6 +81,9 @@ export default function LoginPage() {
       if (!isMounted) return;
 
       if (error || !data.user) {
+        void reportClientError("auth.login.user_fetch_failed", error ?? "missing_user", {
+          stage: "getUser",
+        });
         setCheckingSession(false);
         setMsg("Session expired. Please sign in again.");
         return;
@@ -126,7 +131,11 @@ export default function LoginPage() {
               return;
             }
           }
-        } catch {}
+        } catch (accountStatusError) {
+          void reportClientError("auth.login.account_status_check_failed", accountStatusError, {
+            stage: "account_status_fetch",
+          });
+        }
 
         setMsg("Wrong email or password. Please try again.");
         return;

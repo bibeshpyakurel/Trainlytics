@@ -1,6 +1,7 @@
 import "./globals.css";
 import AppNav from "./AppNav";
 import { STORAGE_KEYS } from "@/lib/preferences";
+import GlobalErrorReporter from "./GlobalErrorReporter";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body suppressHydrationWarning>
+        <GlobalErrorReporter />
         <AppNav />
 
         <main>{children}</main>

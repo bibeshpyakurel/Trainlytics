@@ -10,6 +10,7 @@ import { ensureDefaultExercisesForUser } from "@/lib/defaultExercises";
 import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
 import { ROUTES, getDefaultSignedInRoute, getSafeProtectedNextRoute } from "@/lib/routes";
 import { STORAGE_KEYS } from "@/lib/preferences";
+import { reportClientError } from "@/lib/monitoringClient";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
@@ -71,6 +72,7 @@ export default function SignUpPage() {
       if (!isMounted) return;
 
       if (sessionError) {
+        void reportClientError("auth.signup.session_check_failed", sessionError, { stage: "getSession" });
         setCheckingSession(false);
         showError("Could not verify your session. Please try again.");
         return;

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { jsonError } from "@/lib/apiResponse";
 import { getSupabaseAdminEnv } from "@/lib/env.server";
+import { logServerError } from "@/lib/monitoring";
 
 type RequestBody = {
   email?: string;
@@ -15,7 +16,8 @@ export async function POST(request: Request) {
   let env: ReturnType<typeof getSupabaseAdminEnv>;
   try {
     env = getSupabaseAdminEnv();
-  } catch {
+  } catch (error) {
+    logServerError("api.auth.account_status.env_missing", error);
     return jsonError("Server auth check is not configured.", 503);
   }
 
@@ -39,6 +41,7 @@ export async function POST(request: Request) {
       });
 
       if (error) {
+        logServerError("api.auth.account_status.list_users_failed", error);
         return jsonError(`Failed to check account status: ${error.message}`, 500);
       }
 
@@ -54,7 +57,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ exists });
-  } catch {
+  } catch (error) {
+    logServerError("api.auth.account_status.unhandled", error);
     return jsonError("Failed to process account status request.", 500);
   }
 }
