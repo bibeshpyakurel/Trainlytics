@@ -103,7 +103,7 @@ export default function ProfilePage() {
       if (!isMounted) return;
 
       if (profileError) {
-        setMsg("Profile table is not set up yet. Add db/profiles.sql in Supabase.");
+        setMsg("Profile table is not set up yet. Add db/schema/profiles.sql in Supabase.");
       } else {
         setFirstName(profileRow?.first_name ?? "");
         setLastName(profileRow?.last_name ?? "");

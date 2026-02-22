@@ -55,7 +55,7 @@ Then restart the dev server.
 To enable saving first/last name and profile photo in Profile settings:
 
 1. Open Supabase SQL Editor.
-2. Copy the SQL from `db/profiles.sql`.
+2. Copy the SQL from `db/schema/profiles.sql`.
 3. Run it once.
 
 This creates:
