@@ -11,8 +11,7 @@ Users can:
 
 ## Live Demo
 
-Add your deployment URL here after publish:
-- `https://your-app-url.vercel.app`
+- `https://gym-tracker-gold-mu.vercel.app`
 
 ## Key Features
 
@@ -57,13 +56,13 @@ flowchart LR
   SC --> SD[(Supabase Postgres + RLS)]
   SC --> SS[(Supabase Storage)]
 
-  F --> API1[/api/auth/account-status]
-  F --> API2[/api/insights-ai]
+  F --> API1["/api/auth/account-status"]
+  F --> API2["/api/insights-ai"]
   A --> API1
   API1 --> SA
   API2 --> OAI[(OpenAI API)]
 
-  N --> MON[/api/monitoring/error]
+  N --> MON["/api/monitoring/error"]
   A --> MON
   F --> MON
 ```
