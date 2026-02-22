@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_COPY } from "@/lib/appCopy";
 import { TABLES } from "@/lib/dbNames";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 
 export default function LaunchPage() {
   const router = useRouter();
@@ -23,7 +23,7 @@ export default function LaunchPage() {
       if (!isMounted) return;
 
       if (error || !data.session) {
-        router.replace(ROUTES.login);
+        router.replace(buildLoginRedirectPath(ROUTES.launch, "session_expired"));
         return;
       }
 

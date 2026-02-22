@@ -11,6 +11,7 @@ import type {
   PendingOverwrite,
 } from "@/features/bodyweight/types";
 import { formatWeightFromKg } from "@/features/bodyweight/utils";
+import { toLocalIsoDate } from "@/lib/localDate";
 import {
   deleteBodyweightLogForCurrentUser,
   getCurrentUserId,
@@ -35,7 +36,7 @@ import {
 } from "recharts";
 
 export default function BodyweightPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalIsoDate();
 
   const [date, setDate] = useState(
     today

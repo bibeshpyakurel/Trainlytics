@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/apiResponse";
 import { getInsightsAiEnv } from "@/lib/env.server";
+import { logServerError } from "@/lib/monitoring";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -19,7 +20,8 @@ export async function POST(request: Request) {
   let env: ReturnType<typeof getInsightsAiEnv>;
   try {
     env = getInsightsAiEnv();
-  } catch {
+  } catch (error) {
+    logServerError("api.insights_ai.env_missing", error);
     return jsonError("Missing OPENAI_API_KEY. Add it to your environment to enable AI chat.", 500);
   }
 
@@ -76,8 +78,8 @@ export async function POST(request: Request) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      return jsonError(`AI provider error: ${response.status} ${errorText}`, 502);
+      logServerError("api.insights_ai.provider_error", `status_${response.status}`);
+      return jsonError(`AI provider error: ${response.status}`, 502);
     }
 
     const data = (await response.json()) as {
@@ -90,7 +92,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ answer });
-  } catch {
+  } catch (error) {
+    logServerError("api.insights_ai.unhandled", error);
     return jsonError("Failed to process AI request.", 500);
   }
 }

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DashboardData } from "@/lib/dashboardTypes";
 import { loadDashboardData } from "@/lib/dashboardService";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 import type {
   StrengthTimeSeriesPoint,
   TrackedMuscleGroup,
@@ -163,7 +163,7 @@ export default function DashboardPage() {
       if (result.status === "unauthenticated") {
         setMsg("You are not logged in.");
         setLoading(false);
-        router.replace(ROUTES.login);
+        router.replace(buildLoginRedirectPath(ROUTES.dashboard, "session_expired"));
         return;
       }
 

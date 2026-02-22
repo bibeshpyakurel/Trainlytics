@@ -56,7 +56,8 @@ with check (auth.uid() = user_id);
 drop policy if exists "calories_update_own" on public.calories_logs;
 create policy "calories_update_own"
 on public.calories_logs for update
-using (auth.uid() = user_id);
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
 drop policy if exists "calories_delete_own" on public.calories_logs;
 create policy "calories_delete_own"

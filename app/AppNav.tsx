@@ -11,7 +11,12 @@ import { ROUTES } from "@/lib/routes";
 export default function AppNav() {
   const pathname = usePathname();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const hideNav = pathname === ROUTES.login || pathname === ROUTES.launch || pathname === ROUTES.signout;
+  const hideNav =
+    pathname === ROUTES.login ||
+    pathname === ROUTES.signup ||
+    pathname === ROUTES.forgotPassword ||
+    pathname === ROUTES.launch ||
+    pathname === ROUTES.signout;
 
   useEffect(() => {
     if (hideNav) return;
@@ -37,6 +42,18 @@ export default function AppNav() {
       isMounted = false;
     };
   }, [hideNav, pathname]);
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        setAvatarUrl(null);
+      }
+    });
+
+    return () => {
+      data.subscription.unsubscribe();
+    };
+  }, []);
 
   if (hideNav) {
     return null;

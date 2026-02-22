@@ -138,7 +138,8 @@ with check (auth.uid() = user_id);
 drop policy if exists "exercises_update_own" on public.exercises;
 create policy "exercises_update_own"
 on public.exercises for update
-using (auth.uid() = user_id);
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
 drop policy if exists "exercises_delete_own" on public.exercises;
 create policy "exercises_delete_own"
@@ -159,7 +160,8 @@ with check (auth.uid() = user_id);
 drop policy if exists "sessions_update_own" on public.workout_sessions;
 create policy "sessions_update_own"
 on public.workout_sessions for update
-using (auth.uid() = user_id);
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
 drop policy if exists "sessions_delete_own" on public.workout_sessions;
 create policy "sessions_delete_own"
@@ -180,7 +182,8 @@ with check (auth.uid() = user_id);
 drop policy if exists "sets_update_own" on public.workout_sets;
 create policy "sets_update_own"
 on public.workout_sets for update
-using (auth.uid() = user_id);
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
 drop policy if exists "sets_delete_own" on public.workout_sets;
 create policy "sets_delete_own"
@@ -201,7 +204,8 @@ with check (auth.uid() = user_id);
 drop policy if exists "bodyweight_update_own" on public.bodyweight_logs;
 create policy "bodyweight_update_own"
 on public.bodyweight_logs for update
-using (auth.uid() = user_id);
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
 drop policy if exists "bodyweight_delete_own" on public.bodyweight_logs;
 create policy "bodyweight_delete_own"

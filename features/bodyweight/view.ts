@@ -1,6 +1,7 @@
 import type { Unit } from "@/lib/convertWeight";
 import type { BodyweightLog, ChartRange, HistoryFilterMode } from "@/features/bodyweight/types";
 import { CHART_DAYS_BY_RANGE, formatWeightFromKg } from "@/features/bodyweight/utils";
+import { getLocalIsoDateDaysAgo } from "@/lib/localDate";
 
 type ChartPoint = {
   logDate: string;
@@ -41,10 +42,7 @@ export function getBodyweightChartView(
 ) {
   const fullChartData = buildFullChartData(logs, displayUnit);
   const rangeDays = CHART_DAYS_BY_RANGE[chartRange];
-  const rangeStartDate = new Date();
-  rangeStartDate.setHours(0, 0, 0, 0);
-  rangeStartDate.setDate(rangeStartDate.getDate() - rangeDays + 1);
-  const rangeStartIso = rangeStartDate.toISOString().slice(0, 10);
+  const rangeStartIso = getLocalIsoDateDaysAgo(rangeDays - 1);
 
   const chartData = fullChartData.filter((point) => point.logDate >= rangeStartIso);
   const chartWeights = chartData.map((d) => d.weight);

@@ -1,14 +1,10 @@
 import { supabase } from "@/lib/supabaseClient";
 import type { CaloriesLog, PendingOverwrite } from "@/features/calories/types";
 import { TABLES } from "@/lib/dbNames";
+import { getCurrentUserIdFromSession } from "@/lib/authSession";
 
 export async function getCurrentUserId(): Promise<{ userId: string | null; error: string | null }> {
-  const { data: sessionData, error } = await supabase.auth.getSession();
-  if (error) {
-    return { userId: null, error: error.message };
-  }
-
-  return { userId: sessionData.session?.user.id ?? null, error: null };
+  return getCurrentUserIdFromSession();
 }
 
 export async function loadCaloriesLogsForCurrentUser(): Promise<{

@@ -1,5 +1,6 @@
 import type { CaloriesLog, ChartRange, HistoryFilterMode } from "@/features/calories/types";
 import { CHART_DAYS_BY_RANGE, getTotalCalories } from "@/features/calories/utils";
+import { getLocalIsoDateDaysAgo } from "@/lib/localDate";
 
 type CaloriesChartPoint = {
   logDate: string;
@@ -46,10 +47,7 @@ function buildFullChartData(logs: CaloriesLog[]): CaloriesChartPoint[] {
 export function getCaloriesChartView(logs: CaloriesLog[], chartRange: ChartRange) {
   const fullChartData = buildFullChartData(logs);
   const rangeDays = CHART_DAYS_BY_RANGE[chartRange];
-  const rangeStartDate = new Date();
-  rangeStartDate.setHours(0, 0, 0, 0);
-  rangeStartDate.setDate(rangeStartDate.getDate() - rangeDays + 1);
-  const rangeStartIso = rangeStartDate.toISOString().slice(0, 10);
+  const rangeStartIso = getLocalIsoDateDaysAgo(rangeDays - 1);
 
   const chartData = fullChartData.filter((point) => point.logDate >= rangeStartIso);
   const chartTotals = chartData.map((point) => point.total);

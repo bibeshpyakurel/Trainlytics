@@ -1,0 +1,27 @@
+{
+  "name": "default",
+  "description": "Canonical DB apply order: base schema first, then incremental migrations.",
+  "phases": [
+    {
+      "name": "schema",
+      "files": [
+        "db/schema/workout_bodyweight.sql",
+        "db/schema/calories_logs.sql",
+        "db/schema/profiles.sql"
+      ]
+    },
+    {
+      "name": "migrations",
+      "files": [
+        "db/migrations/push_day_add_cable_lateral_raises.sql",
+        "db/migrations/pull_day_add_diverging_low_row.sql",
+        "db/migrations/normalize_exercises_catalog.sql",
+        "db/migrations/archive_legacy_duplicate_exercises.sql"
+      ]
+    }
+  ],
+  "audit_files": [
+    "db/audit/rls_policy_audit.sql",
+    "db/audit/validate_exercise_catalog.sql"
+  ]
+}

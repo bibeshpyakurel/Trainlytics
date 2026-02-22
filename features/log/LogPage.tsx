@@ -87,8 +87,34 @@ export default function LogWorkoutPage() {
       const key = ex.muscle_group;
       map.set(key, [...(map.get(key) ?? []), ex]);
     }
-    return Array.from(map.entries());
-  }, [exercises]);
+
+    const muscleGroupOrderBySplit: Record<Split, string[]> = {
+      push: ["chest", "shoulders", "triceps"],
+      pull: ["back", "biceps"],
+      legs: ["quads", "hamstrings", "calves"],
+      core: ["core"],
+    };
+
+    const normalize = (value: string) => value.trim().toLowerCase();
+    const orderList = muscleGroupOrderBySplit[split].map(normalize);
+    const groupOrder = new Map<string, number>(orderList.map((name, index) => [name, index]));
+
+    return Array.from(map.entries())
+      .map(([groupName, items]) => {
+        const sortedItems = [...items].sort((a, b) => {
+          if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+          return a.name.localeCompare(b.name);
+        });
+
+        return [groupName, sortedItems] as const;
+      })
+      .sort(([a], [b]) => {
+        const aIdx = groupOrder.get(normalize(a)) ?? Number.MAX_SAFE_INTEGER;
+        const bIdx = groupOrder.get(normalize(b)) ?? Number.MAX_SAFE_INTEGER;
+        if (aIdx !== bIdx) return aIdx - bIdx;
+        return a.localeCompare(b);
+      });
+  }, [exercises, split]);
 
   const splitLabel = split.charAt(0).toUpperCase() + split.slice(1);
   const selectedLastSession = lastSessionBySplit[split];
@@ -1028,11 +1054,6 @@ export default function LogWorkoutPage() {
               {loading ? "Saving..." : "Save Workout"}
             </button>
           </div>
-          {!hasAtLeastOneCompleteSet && (
-            <p className="mt-3 text-center text-xs text-zinc-400">
-              Enter at least one complete set (reps + weight, or duration) to enable Save Workout.
-            </p>
-          )}
         </div>
 
         <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">

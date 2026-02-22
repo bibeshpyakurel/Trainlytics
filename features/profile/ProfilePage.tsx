@@ -7,11 +7,12 @@ import SaveStatusOverlay from "@/features/profile/components/SaveStatusOverlay";
 import AvatarCropModal from "@/features/profile/components/AvatarCropModal";
 import DeleteAvatarConfirmModal from "@/features/profile/components/DeleteAvatarConfirmModal";
 import { STORAGE_KEYS, setStoredBoolean } from "@/lib/preferences";
+import { clearAccountScopedClientState } from "@/lib/accountScopedClientState";
 import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
 import TogglePill from "@/shared/ui/TogglePill";
 import { STORAGE_BUCKETS, STORAGE_PUBLIC_PATH_MARKERS, TABLES } from "@/lib/dbNames";
 import { APP_COPY } from "@/lib/appCopy";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 
 type ThemeMode = "light" | "dark";
 type SaveOverlayState = "hidden" | "saving" | "success";
@@ -19,6 +20,13 @@ type AvatarCropState = {
   sourceUrl: string;
 };
 const NAME_PATTERN = /^[A-Za-z][A-Za-z '-]*$/;
+const PASSWORD_RULES = [
+  { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
+  { label: "At least 1 uppercase letter", test: (value: string) => /[A-Z]/.test(value) },
+  { label: "At least 1 lowercase letter", test: (value: string) => /[a-z]/.test(value) },
+  { label: "At least 1 number", test: (value: string) => /[0-9]/.test(value) },
+  { label: "At least 1 special character", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
+];
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -38,6 +46,11 @@ export default function ProfilePage() {
   const [cropOffsetX, setCropOffsetX] = useState(0);
   const [cropOffsetY, setCropOffsetY] = useState(0);
   const [msg, setMsg] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [launchAnimationEnabled, setLaunchAnimationEnabled] = useState(true);
   const [speakRepliesEnabled, setSpeakRepliesEnabled] = useState(false);
@@ -49,6 +62,10 @@ export default function ProfilePage() {
     if (normalizedLastName && !NAME_PATTERN.test(normalizedLastName)) return false;
     return true;
   }, [normalizedFirstName, normalizedLastName]);
+  const passwordRuleFailures = useMemo(
+    () => PASSWORD_RULES.filter((rule) => !rule.test(newPassword)),
+    [newPassword]
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -69,7 +86,7 @@ export default function ProfilePage() {
       if (!isMounted) return;
 
       if (error || !data.session) {
-        router.replace(ROUTES.login);
+        router.replace(buildLoginRedirectPath(ROUTES.profile, "session_expired"));
         return;
       }
 
@@ -86,7 +103,7 @@ export default function ProfilePage() {
       if (!isMounted) return;
 
       if (profileError) {
-        setMsg("Profile table is not set up yet. Add db/profiles.sql in Supabase.");
+        setMsg("Profile table is not set up yet. Add db/schema/profiles.sql in Supabase.");
       } else {
         setFirstName(profileRow?.first_name ?? "");
         setLastName(profileRow?.last_name ?? "");
@@ -136,7 +153,41 @@ export default function ProfilePage() {
       return;
     }
 
+    clearAccountScopedClientState();
     router.replace(ROUTES.signout);
+  }
+
+  async function updatePassword() {
+    if (!newPassword || !confirmNewPassword) {
+      setMsg("Please enter and confirm a new password.");
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setMsg("Password and confirm password do not match.");
+      return;
+    }
+
+    if (passwordRuleFailures.length > 0) {
+      setMsg("Password does not meet requirements.");
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    setMsg(null);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setIsUpdatingPassword(false);
+
+    if (error) {
+      setMsg(`Failed to update password: ${error.message}`);
+      return;
+    }
+
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setShowNewPassword(false);
+    setShowConfirmNewPassword(false);
+    setMsg("Password updated ✅");
   }
 
   async function saveName() {
@@ -555,10 +606,78 @@ export default function ProfilePage() {
               <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">Email</p>
               <p className="mt-1 text-sm font-medium text-zinc-100">{email || "Not available"}</p>
             </div>
+            <div className="mt-4 rounded-xl border border-zinc-700/70 bg-zinc-950/50 px-4 py-4">
+              <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">Update Password</p>
+
+              <label htmlFor="profile-new-password" className="mt-3 block text-sm font-medium text-zinc-200">
+                New password
+              </label>
+              <input
+                id="profile-new-password"
+                type={showNewPassword ? "text" : "password"}
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                autoComplete="new-password"
+              />
+              <label className="mt-2 inline-flex items-center gap-2 text-xs text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={showNewPassword}
+                  onChange={(event) => setShowNewPassword(event.target.checked)}
+                />
+                Show password
+              </label>
+
+              <label htmlFor="profile-confirm-new-password" className="mt-3 block text-sm font-medium text-zinc-200">
+                Confirm new password
+              </label>
+              <input
+                id="profile-confirm-new-password"
+                type={showConfirmNewPassword ? "text" : "password"}
+                value={confirmNewPassword}
+                onChange={(event) => setConfirmNewPassword(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                autoComplete="new-password"
+              />
+              <label className="mt-2 inline-flex items-center gap-2 text-xs text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={showConfirmNewPassword}
+                  onChange={(event) => setShowConfirmNewPassword(event.target.checked)}
+                />
+                Show confirm password
+              </label>
+
+              <ul className="mt-3 space-y-1 text-xs text-zinc-400">
+                {PASSWORD_RULES.map((rule) => {
+                  const passed = rule.test(newPassword);
+                  return (
+                    <li key={rule.label} className={passed ? "text-emerald-300" : "text-zinc-400"}>
+                      {passed ? "[x]" : "[ ]"} {rule.label}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <button
+                type="button"
+                onClick={() => void updatePassword()}
+                disabled={
+                  isUpdatingPassword ||
+                  isSigningOut ||
+                  isSavingName ||
+                  isUploadingAvatar
+                }
+                className={`mt-3 rounded-xl px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-50 ${CLASS_GRADIENT_PRIMARY}`}
+              >
+                {isUpdatingPassword ? "Updating..." : "Update Password"}
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => void signOut()}
-              disabled={isSigningOut || isSavingName || isUploadingAvatar}
+              disabled={isSigningOut || isSavingName || isUploadingAvatar || isUpdatingPassword}
               className="mt-4 rounded-xl border border-red-400/60 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
             >
               {isSigningOut ? "Signing out..." : "Sign out"}
