@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_COPY } from "@/lib/appCopy";
 import { TABLES } from "@/lib/dbNames";
@@ -27,8 +27,6 @@ function getPasswordValidationErrors(password: string) {
 
 export default function SignUpPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const nextParam = searchParams.get("next");
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -57,6 +55,11 @@ export default function SignUpPage() {
   function showSuccess(message: string) {
     setMsg(message);
     setMsgTone("success");
+  }
+
+  function readNextParam() {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("next");
   }
 
   useEffect(() => {
@@ -95,6 +98,7 @@ export default function SignUpPage() {
       if (data.user) {
         const launchAnimationEnabled =
           localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+        const nextParam = readNextParam();
         const nextRoute = getSafeProtectedNextRoute(nextParam);
         router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
         return;
@@ -105,7 +109,7 @@ export default function SignUpPage() {
       isMounted = false;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [nextParam, router]);
+  }, [router]);
 
   async function signUp(e?: FormEvent<HTMLFormElement>) {
     e?.preventDefault();
@@ -196,6 +200,7 @@ export default function SignUpPage() {
 
     if (hasSession) {
       const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+      const nextParam = readNextParam();
       const nextRoute = getSafeProtectedNextRoute(nextParam);
       router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
       return;
@@ -263,6 +268,7 @@ export default function SignUpPage() {
 
     if (data.session) {
       const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+      const nextParam = readNextParam();
       const nextRoute = getSafeProtectedNextRoute(nextParam);
       router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
       return;

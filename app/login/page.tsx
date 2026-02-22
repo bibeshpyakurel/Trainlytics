@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { APP_COPY } from "@/lib/appCopy";
@@ -28,9 +28,6 @@ function isInvalidCredentialsError(message: string) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const nextParam = searchParams.get("next");
-  const reasonParam = searchParams.get("reason");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -38,6 +35,11 @@ export default function LoginPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+
+  function readSearchParam(name: string) {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get(name);
+  }
 
   useEffect(() => {
     const rafId = window.requestAnimationFrame(() => {
@@ -70,6 +72,7 @@ export default function LoginPage() {
       }
 
       if (!sessionData.session) {
+        const reasonParam = readSearchParam("reason");
         const reasonMessage = toFriendlyLoginReason(reasonParam);
         if (reasonMessage) {
           setMsg(reasonMessage);
@@ -93,6 +96,7 @@ export default function LoginPage() {
       if (data.user) {
         const launchAnimationEnabled =
           localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+        const nextParam = readSearchParam("next");
         const nextRoute = getSafeProtectedNextRoute(nextParam);
         router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
         return;
@@ -103,7 +107,7 @@ export default function LoginPage() {
       isMounted = false;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [nextParam, reasonParam, router]);
+  }, [router]);
 
   async function signIn(e?: FormEvent<HTMLFormElement>) {
     e?.preventDefault();
@@ -159,6 +163,7 @@ export default function LoginPage() {
     setRecentEmails(getRecentLoginEmails());
 
     const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+    const nextParam = readSearchParam("next");
     const nextRoute = getSafeProtectedNextRoute(nextParam);
     router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
   }
