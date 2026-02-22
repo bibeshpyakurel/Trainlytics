@@ -1,34 +1,89 @@
 # Gym Tracker
 
-Gym Tracker is a Next.js + Supabase app for workout logging, bodyweight/calorie tracking, profile management, and AI-driven insights.
+A full-stack personal fitness tracker focused on consistency, clean data separation per user, and reliable auth flows.
+
+Users can:
+- create accounts and verify with OTP
+- log workouts by split (`push`, `pull`, `legs`, `core`)
+- track bodyweight and calories
+- view dashboard/insights trends
+- manage profile and sign out safely
+
+## Live Demo
+
+Add your deployment URL here after publish:
+- `https://your-app-url.vercel.app`
+
+## Key Features
+
+- Email/password auth with OTP-based signup verification
+- Forgot-password with OTP + new password update flow
+- Route guarding for protected pages
+- Account-scoped data isolation (Supabase RLS)
+- Consistent canonical exercise catalog across users
+- Dark theme default
+- Basic runtime monitoring for auth/API errors
 
 ## Tech Stack
 
 - Next.js 16 (App Router)
-- React 19
-- TypeScript
+- React 19 + TypeScript
 - Tailwind CSS 4
 - Supabase (Auth, Postgres, Storage, RLS)
 - Vitest (unit tests)
-- Playwright (E2E; optional local setup)
+- Playwright (auth-critical E2E)
 
-## Project Structure
+## Project Architecture
 
-- `app/`: routes and API handlers
-- `features/`: feature modules (UI + feature logic)
-- `lib/`: shared infrastructure/utilities
-- `db/`: SQL schema, migrations, audits, and migration plan
-- `scripts/db/`: DB plan runner and validator
-- `e2e/`: Playwright end-to-end tests
+- `app/`: routes and API endpoints
+- `features/`: feature modules (UI + domain logic)
+- `lib/`: shared services/utilities (auth, routes, monitoring, helpers)
+- `db/`: schema, migrations, audits, and migration plan
+- `scripts/db/`: DB plan runner + validator
+- `e2e/`: Playwright test suite
 
-## Routes
+### System Diagram
 
-Public routes:
+```mermaid
+flowchart LR
+  U[User Browser] --> N[Next.js App Router]
+  N --> P[proxy.ts Route Guard]
+  P -->|Public| A[Auth Pages<br/>/login /signup /forgot-password]
+  P -->|Protected| F[Feature Pages<br/>dashboard/log/bodyweight/calories/profile/insights]
+
+  A --> SC[lib/supabaseClient]
+  F --> SC
+  SC --> SA[(Supabase Auth)]
+  SC --> SD[(Supabase Postgres + RLS)]
+  SC --> SS[(Supabase Storage)]
+
+  F --> API1[/api/auth/account-status]
+  F --> API2[/api/insights-ai]
+  A --> API1
+  API1 --> SA
+  API2 --> OAI[(OpenAI API)]
+
+  N --> MON[/api/monitoring/error]
+  A --> MON
+  F --> MON
+```
+
+### Runtime Flow
+
+1. Requests hit `proxy.ts`, which enforces public vs protected route access.
+2. Client pages use `lib/supabaseClient` for auth/session and user-scoped data operations.
+3. Supabase RLS policies enforce per-user data isolation in database tables.
+4. Server APIs handle privileged checks (`/api/auth/account-status`) and optional AI insights (`/api/insights-ai`).
+5. Client and server runtime errors are reported to monitoring logs via `/api/monitoring/error`.
+
+## Route Contract
+
+Public:
 - `/login`
 - `/signup`
 - `/forgot-password`
 
-Protected routes:
+Protected:
 - `/launch`
 - `/dashboard`
 - `/insights`
@@ -38,59 +93,42 @@ Protected routes:
 - `/profile`
 
 Other:
-- `/signout` (sign-out flow)
-- `/` redirects to `/dashboard` (proxy handles auth redirect if session is missing)
+- `/signout`
+- `/` redirects to `/dashboard`
 
-Route access control is centralized in `lib/routes.ts` and enforced in `proxy.ts`.
-
-## Auth Flow
-
-- Email/password sign-up and sign-in
-- Signup includes OTP verification flow (`verifyOtp` for `type: "signup"`)
-- Forgot password uses OTP (`signInWithOtp` with `shouldCreateUser: false`) + password update
-- Sign-out clears account-scoped client state and redirects to login
-
-Optional server-side account existence checks are provided by:
-- `POST /api/auth/account-status`
-
-This endpoint requires `SUPABASE_SERVICE_ROLE_KEY` on the server.
+Route rules are centralized in `lib/routes.ts` and enforced in `proxy.ts`.
 
 ## Environment Variables
 
 Create `.env.local`:
 
 ```bash
-# Required (client + server)
+# Required
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-
-# Required only for account-status API checks
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
 
-# Required only for AI Insights API
+# Optional (needed only for Insights AI chat)
 OPENAI_API_KEY=YOUR_OPENAI_API_KEY
-
-# Optional AI overrides
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 Notes:
-- Never expose `SUPABASE_SERVICE_ROLE_KEY` to client code.
-- `lib/env.client.ts` rejects obviously unsafe keys in `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Never expose `SUPABASE_SERVICE_ROLE_KEY` to browser/client code.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` must be the anon key, not service role.
 
-## Local Development
-
-Install and run:
+## Local Setup
 
 ```bash
 npm install
 npm run dev
 ```
 
-App runs at `http://localhost:3000`.
+App runs at:
+- `http://localhost:3000`
 
-## Quality Commands
+## Quality Checks
 
 ```bash
 npm run lint
@@ -99,7 +137,7 @@ npm run test
 npm run check
 ```
 
-CI (`.github/workflows/ci.yml`) runs:
+CI runs:
 - lint
 - typecheck
 - unit tests
@@ -107,37 +145,31 @@ CI (`.github/workflows/ci.yml`) runs:
 
 ## Database Workflow
 
-Migration order is defined in `db/plan.json`.
+Canonical order is defined in `db/plan.json`.
 
-Validate plan coverage/order:
+Validate plan:
 
 ```bash
 npm run db:check-plan
 ```
 
-Apply schema + migrations in canonical order:
+Apply schema + migrations:
 
 ```bash
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require" npm run db:migrate
 ```
 
-After migration, run audit SQL manually in Supabase SQL Editor:
+Run audits (read-only) in Supabase SQL Editor:
 - `db/audit/rls_policy_audit.sql`
 - `db/audit/validate_exercise_catalog.sql`
 
-Reference:
+See:
 - `db/README.md`
 
-## E2E Tests (Auth-Critical)
+## E2E Tests
 
-Specs: `e2e/auth.spec.mjs`
-
-Covered paths:
-- protected route redirects to login
-- `next` redirect parameter preservation
-- login page navigation to signup/forgot-password
-- signup client-side validation
-- forgot-password client-side validation
+Auth-critical spec:
+- `e2e/auth.spec.mjs`
 
 Setup:
 
@@ -153,46 +185,45 @@ npm run e2e
 npm run e2e:headed
 ```
 
-## Runtime Monitoring (Basic)
+## Monitoring
 
-This project includes lightweight built-in monitoring for auth/API runtime failures:
+Basic built-in monitoring is enabled:
+- client runtime errors (`window.error`, `unhandledrejection`)
+- auth flow failure events
+- server-side API error logs
 
-- Client-side:
-  - Global capture of `window.error` and `unhandledrejection`
-  - Auth flow error reports from login/signup/forgot-password
-  - Reports sent to `POST /api/monitoring/error`
-- Server-side:
-  - Structured error logging in key API routes (`/api/auth/account-status`, `/api/insights-ai`)
+Endpoint:
+- `POST /api/monitoring/error`
 
-Where to view:
-- Local: terminal running `npm run dev`
-- Production: host platform logs (for example, Vercel function logs)
+View logs:
+- local terminal (`npm run dev`)
+- deployment logs (for example Vercel function logs)
 
-Note:
-- Monitoring payloads are sanitized and should not include passwords/tokens.
+## Deployment (Vercel)
 
-## Deployment Checklist
+1. Push code to GitHub.
+2. Import repo in Vercel.
+3. Add required env vars in Vercel Project Settings.
+4. Deploy with `npm run build`.
+5. Run DB workflow:
+   - `npm run db:check-plan`
+   - `npm run db:migrate`
+6. Run post-deploy smoke tests:
+   - signup/login/logout
+   - forgot-password OTP flow
+   - protected-route redirect behavior
+   - log workout + data isolation across users
 
-1. Confirm env vars are set in target environment:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY` (if using account-status checks)
-   - `OPENAI_API_KEY` (if using insights AI)
-2. Run `npm run check`.
-3. Run `npm run db:check-plan`.
-4. Run `npm run db:migrate` against staging.
-5. Run DB audit SQL queries and review results.
-6. Smoke test auth flows in staging:
-   - signup OTP
-   - login/logout
-   - forgot-password OTP + update password
-   - protected route redirects
-7. Deploy app.
-8. Run `npm run db:migrate` in production.
-9. Re-run smoke tests in production.
+## Security
 
-## Security Notes
+- Keep all secrets in environment variables only.
+- Never commit `.env.local`.
+- Keep RLS enabled on all app-used tables.
+- Do not return raw provider error bodies from API routes.
 
-- Do not commit `.env.local` or any secret keys.
-- Do not use service-role key in browser/client code.
-- Keep RLS enabled for all app-used tables.
+## Roadmap
+
+- Add full CI E2E run
+- Improve observability dashboards/alerts
+- Add optional OAuth providers
+- Expand insights and trend visualizations
