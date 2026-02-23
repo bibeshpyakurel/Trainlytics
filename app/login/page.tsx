@@ -16,6 +16,7 @@ import {
 } from "@/lib/recentLoginEmails";
 import { toFriendlyLoginReason, toFriendlySignInErrorMessage } from "@/lib/authErrors";
 import { reportClientError } from "@/lib/monitoringClient";
+import { runAuthSessionPreflight } from "@/lib/authPreflight";
 
 function isInvalidCredentialsError(message: string) {
   const text = message.toLowerCase();
@@ -52,61 +53,34 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-    let timeoutId: number | null = null;
-
-    (async () => {
-      timeoutId = window.setTimeout(() => {
-        if (!isMounted) return;
-        setCheckingSession(false);
-      }, 3000);
-
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (!isMounted) return;
-
-      if (sessionError) {
+    return runAuthSessionPreflight({
+      setCheckingSession,
+      timeoutMs: 3000,
+      onSessionError: (sessionError) => {
         void reportClientError("auth.login.session_check_failed", sessionError, { stage: "getSession" });
-        setCheckingSession(false);
         setMsg("Could not verify your session. Please sign in.");
-        return;
-      }
-
-      if (!sessionData.session) {
+      },
+      onUnauthenticated: () => {
         const reasonParam = readSearchParam("reason");
         const reasonMessage = toFriendlyLoginReason(reasonParam);
         if (reasonMessage) {
           setMsg(reasonMessage);
         }
-        setCheckingSession(false);
-        return;
-      }
-
-      const { data, error } = await supabase.auth.getUser();
-      if (!isMounted) return;
-
-      if (error || !data.user) {
+      },
+      onUserError: (error) => {
         void reportClientError("auth.login.user_fetch_failed", error ?? "missing_user", {
           stage: "getUser",
         });
-        setCheckingSession(false);
         setMsg("Session expired. Please sign in again.");
-        return;
-      }
-
-      if (data.user) {
+      },
+      onAuthenticated: () => {
         const launchAnimationEnabled =
           localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
         const nextParam = readSearchParam("next");
         const nextRoute = getSafeProtectedNextRoute(nextParam);
         router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
-        return;
-      }
-    })();
-
-    return () => {
-      isMounted = false;
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-    };
+      },
+    });
   }, [router]);
 
   async function signIn(e?: FormEvent<HTMLFormElement>) {
@@ -114,34 +88,16 @@ export default function LoginPage() {
     setLoading(true);
     setMsg(null);
 
+    const normalizedEmail = email.trim().toLowerCase();
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: normalizedEmail,
       password,
     });
 
     if (error) {
       setLoading(false);
       if (isInvalidCredentialsError(error.message)) {
-        try {
-          const response = await fetch("/api/auth/account-status", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email }),
-          });
-
-          if (response.ok) {
-            const payload = (await response.json()) as { exists?: boolean };
-            if (!payload.exists) {
-              setMsg("No account exists with this email. Please create an account first.");
-              return;
-            }
-          }
-        } catch (accountStatusError) {
-          void reportClientError("auth.login.account_status_check_failed", accountStatusError, {
-            stage: "account_status_fetch",
-          });
-        }
-
         setMsg("Wrong email or password. Please try again.");
         return;
       }
@@ -159,7 +115,7 @@ export default function LoginPage() {
       return;
     }
 
-    rememberRecentLoginEmail(email);
+    rememberRecentLoginEmail(normalizedEmail);
     setRecentEmails(getRecentLoginEmails());
 
     const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";

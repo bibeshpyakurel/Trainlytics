@@ -16,7 +16,8 @@
         "db/migrations/push_day_add_cable_lateral_raises.sql",
         "db/migrations/pull_day_add_diverging_low_row.sql",
         "db/migrations/normalize_exercises_catalog.sql",
-        "db/migrations/archive_legacy_duplicate_exercises.sql"
+        "db/migrations/archive_legacy_duplicate_exercises.sql",
+        "db/migrations/save_workout_sets_atomic.sql"
       ]
     }
   ],

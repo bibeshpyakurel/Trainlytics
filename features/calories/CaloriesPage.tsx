@@ -11,6 +11,7 @@ import type {
 } from "@/features/calories/types";
 import {
   deleteCaloriesLogForCurrentUser,
+  getCaloriesLogForDate,
   getCurrentUserId,
   loadCaloriesLogsForCurrentUser,
   updateCaloriesLogForCurrentUser,
@@ -56,7 +57,7 @@ export default function CaloriesPage() {
   const [historyEndDate, setHistoryEndDate] = useState("");
 
   async function loadLogs() {
-    const { logs: loadedLogs, error } = await loadCaloriesLogsForCurrentUser();
+    const { logs: loadedLogs, error } = await loadCaloriesLogsForCurrentUser({ limit: 400 });
     if (error) {
       setMsg(error);
       return;
@@ -118,6 +119,12 @@ export default function CaloriesPage() {
     setLoading(true);
     setMsg(null);
 
+    if (date > today) {
+      setMsg("Future log dates are not allowed.");
+      setLoading(false);
+      return;
+    }
+
     const { userId, error: userError } = await getCurrentUserId();
     if (userError) {
       setMsg(userError);
@@ -157,7 +164,17 @@ export default function CaloriesPage() {
       postWorkoutKcal: postValue,
     };
 
-    const existingLog = logs.find((log) => log.log_date === date);
+    let existingLog = logs.find((log) => log.log_date === date) ?? null;
+    if (!existingLog) {
+      const { log: serverLog, error: logLookupError } = await getCaloriesLogForDate(userId, date);
+      if (logLookupError) {
+        setMsg(logLookupError);
+        setLoading(false);
+        return;
+      }
+      existingLog = serverLog;
+    }
+
     if (existingLog) {
       payload.preWorkoutKcal = hasPreValue ? preValue : existingLog.pre_workout_kcal;
       payload.postWorkoutKcal = hasPostValue ? postValue : existingLog.post_workout_kcal;
@@ -459,6 +476,7 @@ export default function CaloriesPage() {
               <input
                 id="log-date"
                 type="date"
+                max={today}
                 className="w-full rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}

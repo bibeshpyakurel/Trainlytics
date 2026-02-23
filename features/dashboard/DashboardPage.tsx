@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DashboardData } from "@/lib/dashboardTypes";
-import { loadDashboardData } from "@/lib/dashboardService";
+import { loadDashboardData, type DashboardChartWindow } from "@/lib/dashboardService";
 import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { getDashboardViewModel } from "@/features/dashboard/view";
 import type {
   StrengthTimeSeriesPoint,
   TrackedMuscleGroup,
@@ -143,12 +144,19 @@ const EXERCISE_CATEGORY_LABELS: Record<"push" | "pull" | "legs" | "core", string
   core: "Core",
 };
 
+const WINDOW_OPTIONS: Array<{ id: DashboardChartWindow; label: string }> = [
+  { id: "90d", label: "90D" },
+  { id: "180d", label: "180D" },
+  { id: "all", label: "All" },
+];
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
+  const [chartWindow, setChartWindow] = useState<DashboardChartWindow>("180d");
 
   useEffect(() => {
     let isMounted = true;
@@ -157,7 +165,7 @@ export default function DashboardPage() {
       setLoading(true);
       setMsg(null);
 
-      const result = await loadDashboardData();
+      const result = await loadDashboardData(chartWindow);
       if (!isMounted) return;
 
       if (result.status === "unauthenticated") {
@@ -180,7 +188,7 @@ export default function DashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [router]);
+  }, [router, chartWindow]);
 
   const effectiveSelectedExercise =
     data && data.exerciseNames.length > 0
@@ -191,6 +199,7 @@ export default function DashboardPage() {
 
   const selectedExerciseSeries =
     effectiveSelectedExercise && data ? data.exerciseStrengthSeries[effectiveSelectedExercise] ?? [] : [];
+  const viewModel = getDashboardViewModel({ loading, msg, data });
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
@@ -202,9 +211,7 @@ export default function DashboardPage() {
       <div className="relative z-10 mx-auto w-full max-w-5xl px-6 py-10">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300/80">Dashboard</p>
-          <h1 className="mt-3 text-4xl font-bold text-white">
-            {data?.firstName?.trim() ? `Welcome Back, ${data.firstName.trim()} 💪` : "Welcome Back 💪"}
-          </h1>
+          <h1 className="mt-3 text-4xl font-bold text-white">{viewModel.welcomeTitle}</h1>
           <p className="mt-2 max-w-2xl text-zinc-300">
             Track progress, stay consistent, and keep building strength.
           </p>
@@ -213,37 +220,36 @@ export default function DashboardPage() {
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-zinc-400">Latest Workout</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {loading
-                ? "Loading..."
-                : data?.latestWorkout
-                  ? `${data.latestWorkout.split.toUpperCase()} · ${data.latestWorkout.session_date}`
-                  : "No workouts yet"}
-            </p>
+            <p className="mt-2 text-base font-semibold text-white">{viewModel.latestWorkoutText}</p>
           </div>
           <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-zinc-400">Latest Weight</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {loading
-                ? "Loading..."
-                : data?.latestBodyweight
-                  ? `${data.latestBodyweight.weight_input} ${data.latestBodyweight.unit_input} · ${data.latestBodyweight.log_date}`
-                  : "No logs yet"}
-            </p>
+            <p className="mt-2 text-base font-semibold text-white">{viewModel.latestWeightText}</p>
           </div>
           <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-zinc-400">Latest Calories</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {loading
-                ? "Loading..."
-                : data?.latestCalories
-                  ? `${(data.latestCalories.pre_workout_kcal ?? 0) + (data.latestCalories.post_workout_kcal ?? 0)} kcal · ${data.latestCalories.log_date}`
-                  : "No logs yet"}
-            </p>
+            <p className="mt-2 text-base font-semibold text-white">{viewModel.latestCaloriesText}</p>
           </div>
         </div>
 
-        {msg && <p className="mt-4 text-sm text-red-300">{msg}</p>}
+        {viewModel.errorMessage && <p className="mt-4 text-sm text-red-300">{viewModel.errorMessage}</p>}
+
+        <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1">
+          {WINDOW_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setChartWindow(option.id)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                chartWindow === option.id
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {(data?.trackedMuscleGroups ?? []).map((group) => {
@@ -276,7 +282,9 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">Exercise Strength Trend</h2>
-              <p className="mt-1 text-sm text-zinc-400">Select an exercise to view session strength over time.</p>
+              <p className="mt-1 text-sm text-zinc-400">
+                Select an exercise to view session strength over time ({WINDOW_OPTIONS.find((option) => option.id === chartWindow)?.label} window).
+              </p>
             </div>
 
             <select

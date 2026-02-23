@@ -13,6 +13,7 @@ export default function SignOutPage() {
   const [exiting, setExiting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(true);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -45,7 +46,11 @@ export default function SignOutPage() {
       if (exitTimer) window.clearTimeout(exitTimer);
       if (routeTimer) window.clearTimeout(routeTimer);
     };
-  }, [router]);
+  }, [retryToken, router]);
+
+  function retrySignOut() {
+    setRetryToken((prev) => prev + 1);
+  }
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-zinc-950 text-zinc-100">
@@ -81,7 +86,7 @@ export default function SignOutPage() {
             <p className="text-sm text-red-300">{errorMessage}</p>
             <button
               type="button"
-              onClick={() => window.location.reload()}
+              onClick={retrySignOut}
               className="rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
             >
               Retry sign out
