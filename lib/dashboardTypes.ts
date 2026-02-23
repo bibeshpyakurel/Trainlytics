@@ -17,6 +17,20 @@ export type DashboardData = {
     pre_workout_kcal: number | null;
     post_workout_kcal: number | null;
   } | null;
+  latestMetabolicBurn: {
+    log_date: string;
+    estimated_kcal_spent: number;
+  } | null;
+  avgCalories7d: number | null;
+  avgBurn7d: number | null;
+  netEnergy7d: number | null;
+  energyDataCompletenessPct: number;
+  energyBalanceSeries: Array<{
+    date: string;
+    intakeKcal: number | null;
+    spendKcal: number | null;
+    netKcal: number | null;
+  }>;
   strengthAggregationMode: StrengthAggregationMode;
   trackedMuscleGroups: TrackedMuscleGroup[];
   muscleGroupStrengthSeries: Record<TrackedMuscleGroup, StrengthTimeSeriesPoint[]>;

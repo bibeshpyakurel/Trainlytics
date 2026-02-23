@@ -22,7 +22,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
 
   const { user, userId } = authState;
 
-  const [bodyweightRes, caloriesRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
+  const [bodyweightRes, caloriesRes, metabolicRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
     supabase
       .from(TABLES.bodyweightLogs)
       .select("log_date,weight_input,unit_input,weight_kg")
@@ -31,6 +31,11 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
     supabase
       .from(TABLES.caloriesLogs)
       .select("log_date,pre_workout_kcal,post_workout_kcal")
+      .eq("user_id", userId)
+      .order("log_date", { ascending: true }),
+    supabase
+      .from(TABLES.metabolicActivityLogs)
+      .select("log_date,estimated_kcal_spent")
       .eq("user_id", userId)
       .order("log_date", { ascending: true }),
     supabase
@@ -57,6 +62,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
   if (
     bodyweightRes.error ||
     caloriesRes.error ||
+    metabolicRes.error ||
     workoutSetsRes.error ||
     workoutSessionsRes.error ||
     exercisesRes.error
@@ -66,6 +72,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
       message:
         bodyweightRes.error?.message ||
         caloriesRes.error?.message ||
+        metabolicRes.error?.message ||
         workoutSetsRes.error?.message ||
         workoutSessionsRes.error?.message ||
         exercisesRes.error?.message ||
@@ -91,6 +98,23 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
     date: row.log_date,
     value: Number(row.pre_workout_kcal ?? 0) + Number(row.post_workout_kcal ?? 0),
   }));
+
+  const metabolicActivitySeries: InsightMetricPoint[] = ((metabolicRes.data ?? []) as Array<{
+    log_date: string;
+    estimated_kcal_spent: number;
+  }>).map((row) => ({
+    date: row.log_date,
+    value: Number(row.estimated_kcal_spent),
+  }));
+
+  const intakeByDate = new Map(caloriesSeries.map((point) => [point.date, point.value]));
+  const spendByDate = new Map(metabolicActivitySeries.map((point) => [point.date, point.value]));
+  const netEnergySeries: InsightMetricPoint[] = [...intakeByDate.entries()]
+    .filter(([date]) => spendByDate.has(date))
+    .map(([date, intake]) => ({
+      date,
+      value: intake - Number(spendByDate.get(date) ?? 0),
+    }));
 
   const sessionDateById = new Map<string, string>();
   for (const sessionRow of (workoutSessionsRes.data ?? []) as Array<{ id: string; session_date: string }>) {
@@ -141,6 +165,8 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
   const insights = buildInsightsView({
     bodyweightSeries,
     caloriesSeries,
+    metabolicActivitySeries,
+    netEnergySeries,
     strengthSeries,
   });
   const firstName = profileRes.error ? null : ((profileRes.data?.first_name as string | null | undefined) ?? null);
@@ -153,6 +179,8 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
       ...insights,
       bodyweightSeries,
       caloriesSeries,
+      metabolicActivitySeries,
+      netEnergySeries,
       strengthSeries,
     },
   };

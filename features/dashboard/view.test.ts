@@ -13,6 +13,7 @@ describe("dashboard view model", () => {
     expect(vm.latestWorkoutText).toBe("No workouts yet");
     expect(vm.latestWeightText).toBe("No logs yet");
     expect(vm.latestCaloriesText).toBe("No logs yet");
+    expect(vm.latestBurnText).toBe("No logs yet");
   });
 
   it("returns loading placeholders while data is loading", () => {
@@ -25,6 +26,7 @@ describe("dashboard view model", () => {
     expect(vm.latestWorkoutText).toBe("Loading...");
     expect(vm.latestWeightText).toBe("Loading...");
     expect(vm.latestCaloriesText).toBe("Loading...");
+    expect(vm.latestBurnText).toBe("Loading...");
   });
 
   it("formats populated state values", () => {
@@ -37,6 +39,12 @@ describe("dashboard view model", () => {
         latestWorkout: { session_date: "2026-02-20", split: "push" },
         latestBodyweight: { log_date: "2026-02-20", weight_input: 180, unit_input: "lb" },
         latestCalories: { log_date: "2026-02-20", pre_workout_kcal: 300, post_workout_kcal: 500 },
+        latestMetabolicBurn: { log_date: "2026-02-20", estimated_kcal_spent: 2300 },
+        avgCalories7d: 2400,
+        avgBurn7d: 2200,
+        netEnergy7d: 200,
+        energyDataCompletenessPct: 72,
+        energyBalanceSeries: [],
         strengthAggregationMode: "sum",
         trackedMuscleGroups: ["chest", "back", "tricep", "quad", "shoulder", "abs", "bicep", "hamstring"],
         muscleGroupStrengthSeries: {
@@ -69,5 +77,6 @@ describe("dashboard view model", () => {
     expect(vm.latestWorkoutText).toBe("PUSH · 2026-02-20");
     expect(vm.latestWeightText).toBe("180 lb · 2026-02-20");
     expect(vm.latestCaloriesText).toBe("800 kcal · 2026-02-20");
+    expect(vm.latestBurnText).toBe("2300 kcal · 2026-02-20");
   });
 });

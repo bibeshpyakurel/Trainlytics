@@ -15,6 +15,7 @@ import {
 import { loadInsightsData } from "@/lib/insightsService";
 import { buildInsightsView } from "@/lib/insightsView";
 import type { InsightMetricPoint, InsightsData } from "@/lib/insightsTypes";
+import { LB_PER_KG } from "@/lib/convertWeight";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { API_ROUTES, ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 
@@ -40,15 +41,15 @@ const QUICK_PROMPTS = [
 ];
 
 const RANGE_OPTIONS = [
-  { id: "7d", label: "7d", days: 7 },
-  { id: "30d", label: "30d", days: 30 },
-  { id: "90d", label: "90d", days: 90 },
+  { id: "7d", label: "7 days", days: 7 },
+  { id: "30d", label: "30 days", days: 30 },
+  { id: "90d", label: "90 days", days: 90 },
   { id: "all", label: "All", days: null },
 ] as const;
 
 type RangeOptionId = (typeof RANGE_OPTIONS)[number]["id"];
 
-type MetricId = "weight" | "calories" | "strength";
+type MetricId = "weight" | "calories" | "spend" | "net" | "strength";
 
 type TrendMetricConfig = {
   id: MetricId;
@@ -83,6 +84,8 @@ type PersistedThread = { messages: AssistantMessage[] };
 const TREND_METRICS: TrendMetricConfig[] = [
   { id: "weight", label: "Bodyweight", unit: "kg", targetLogsPerWeek: 4 },
   { id: "calories", label: "Calories", unit: "kcal", targetLogsPerWeek: 5 },
+  { id: "spend", label: "Estimated Burn", unit: "kcal", targetLogsPerWeek: 5 },
+  { id: "net", label: "Net Energy", unit: "kcal", targetLogsPerWeek: 4 },
   { id: "strength", label: "Strength", unit: "score", targetLogsPerWeek: 3 },
 ];
 
@@ -258,6 +261,32 @@ function countOverlapDays(left: InsightMetricPoint[], right: InsightMetricPoint[
   return left.reduce((count, point) => (rightDates.has(point.date) ? count + 1 : count), 0);
 }
 
+function countLaggedOverlapDays(
+  left: InsightMetricPoint[],
+  right: InsightMetricPoint[],
+  lagDays: number
+) {
+  const shiftedRightDates = new Set(
+    right.map((point) => {
+      const shiftedDate = addDays(parseIsoDate(point.date), -lagDays);
+      const year = shiftedDate.getFullYear();
+      const month = String(shiftedDate.getMonth() + 1).padStart(2, "0");
+      const day = String(shiftedDate.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    })
+  );
+  return left.reduce((count, point) => (shiftedRightDates.has(point.date) ? count + 1 : count), 0);
+}
+
+function countPresenceSpanDays(left: InsightMetricPoint[], right: InsightMetricPoint[]) {
+  if (left.length === 0 || right.length === 0) return 0;
+  const allDates = [...left, ...right].map((point) => point.date).sort();
+  if (allDates.length === 0) return 0;
+  const start = parseIsoDate(allDates[0]);
+  const end = parseIsoDate(allDates[allDates.length - 1]);
+  return Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+}
+
 function getLastUserMessageIndex(messages: AssistantMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "user") return index;
@@ -277,7 +306,7 @@ export default function InsightsPage() {
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(false);
-  const [selectedRange, setSelectedRange] = useState<RangeOptionId>("30d");
+  const [selectedRange, setSelectedRange] = useState<RangeOptionId>("7d");
   const [copiedActionId, setCopiedActionId] = useState<string | null>(null);
   const [drilldown, setDrilldown] = useState<DrilldownState | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>("index");
@@ -324,6 +353,8 @@ export default function InsightsPage() {
     return {
       bodyweightSeries: filterSeriesByRange(data?.bodyweightSeries ?? [], selectedRangeConfig.days),
       caloriesSeries: filterSeriesByRange(data?.caloriesSeries ?? [], selectedRangeConfig.days),
+      metabolicActivitySeries: filterSeriesByRange(data?.metabolicActivitySeries ?? [], selectedRangeConfig.days),
+      netEnergySeries: filterSeriesByRange(data?.netEnergySeries ?? [], selectedRangeConfig.days),
       strengthSeries: filterSeriesByRange(data?.strengthSeries ?? [], selectedRangeConfig.days),
     };
   }, [data, selectedRangeConfig.days]);
@@ -333,6 +364,8 @@ export default function InsightsPage() {
       {
         bodyweightSeries: filteredSeries.bodyweightSeries,
         caloriesSeries: filteredSeries.caloriesSeries,
+        metabolicActivitySeries: filteredSeries.metabolicActivitySeries,
+        netEnergySeries: filteredSeries.netEnergySeries,
         strengthSeries: filteredSeries.strengthSeries,
       },
       {
@@ -346,6 +379,8 @@ export default function InsightsPage() {
     const seriesByMetric: Record<MetricId, InsightMetricPoint[]> = {
       weight: filteredSeries.bodyweightSeries,
       calories: filteredSeries.caloriesSeries,
+      spend: filteredSeries.metabolicActivitySeries,
+      net: filteredSeries.netEnergySeries,
       strength: filteredSeries.strengthSeries,
     };
 
@@ -415,6 +450,12 @@ export default function InsightsPage() {
         message: `You need 1 calories log to unlock fueling insights for ${rangeText}.`,
       });
     }
+    if (filteredSeries.metabolicActivitySeries.length === 0) {
+      items.push({
+        id: "burn-start",
+        message: `You need 1 burn log to unlock energy-spend insights for ${rangeText}.`,
+      });
+    }
     if (filteredSeries.strengthSeries.length === 0) {
       items.push({
         id: "strength-start",
@@ -423,8 +464,10 @@ export default function InsightsPage() {
     }
 
     const caloriesStrengthOverlap = countOverlapDays(filteredSeries.caloriesSeries, filteredSeries.strengthSeries);
-    const caloriesWeightOverlap = countOverlapDays(filteredSeries.caloriesSeries, filteredSeries.bodyweightSeries);
+    const netLag3Overlap = countLaggedOverlapDays(filteredSeries.netEnergySeries, filteredSeries.bodyweightSeries, 3);
+    const netLag7Overlap = countLaggedOverlapDays(filteredSeries.netEnergySeries, filteredSeries.bodyweightSeries, 7);
     const strengthWeightOverlap = countOverlapDays(filteredSeries.strengthSeries, filteredSeries.bodyweightSeries);
+    const spendConsistencyOverlap = countPresenceSpanDays(filteredSeries.metabolicActivitySeries, filteredSeries.strengthSeries);
 
     const missingCaloriesStrength = Math.max(0, 3 - caloriesStrengthOverlap);
     if (missingCaloriesStrength > 0) {
@@ -434,11 +477,19 @@ export default function InsightsPage() {
       });
     }
 
-    const missingCaloriesWeight = Math.max(0, 3 - caloriesWeightOverlap);
-    if (missingCaloriesWeight > 0) {
+    const missingNetLag3 = Math.max(0, 3 - netLag3Overlap);
+    if (missingNetLag3 > 0) {
       items.push({
-        id: "corr-cal-weight",
-        message: `You need ${missingCaloriesWeight} more overlapping calories + bodyweight day${missingCaloriesWeight === 1 ? "" : "s"} to unlock calories-bodyweight correlation.`,
+        id: "corr-net-weight-lag3",
+        message: `You need ${missingNetLag3} more overlap day${missingNetLag3 === 1 ? "" : "s"} to unlock net-energy (lag 3d) vs bodyweight correlation.`,
+      });
+    }
+
+    const missingNetLag7 = Math.max(0, 3 - netLag7Overlap);
+    if (missingNetLag7 > 0) {
+      items.push({
+        id: "corr-net-weight-lag7",
+        message: `You need ${missingNetLag7} more overlap day${missingNetLag7 === 1 ? "" : "s"} to unlock net-energy (lag 7d) vs bodyweight correlation.`,
       });
     }
 
@@ -447,6 +498,14 @@ export default function InsightsPage() {
       items.push({
         id: "corr-strength-weight",
         message: `You need ${missingStrengthWeight} more overlapping strength + bodyweight day${missingStrengthWeight === 1 ? "" : "s"} to unlock strength-bodyweight correlation.`,
+      });
+    }
+
+    const missingSpendConsistency = Math.max(0, 3 - spendConsistencyOverlap);
+    if (missingSpendConsistency > 0) {
+      items.push({
+        id: "corr-spend-consistency",
+        message: `You need ${missingSpendConsistency} more day${missingSpendConsistency === 1 ? "" : "s"} of burn/workout logging span to unlock spend-consistency vs workout-consistency correlation.`,
       });
     }
 
@@ -466,7 +525,7 @@ export default function InsightsPage() {
   }, [filteredSeries, trendDecomposition.metricRows, selectedRangeConfig.label]);
 
   const mergedTrendData = useMemo(() => {
-    const byDate = new Map<string, { date: string; label: string; weightKg?: number; calories?: number; strength?: number }>();
+    const byDate = new Map<string, { date: string; label: string; weightKg?: number; calories?: number; spend?: number; net?: number; strength?: number }>();
 
     for (const point of filteredSeries.bodyweightSeries) {
       byDate.set(point.date, {
@@ -479,6 +538,20 @@ export default function InsightsPage() {
       byDate.set(point.date, {
         ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
         calories: point.value,
+      });
+    }
+
+    for (const point of filteredSeries.metabolicActivitySeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        spend: point.value,
+      });
+    }
+
+    for (const point of filteredSeries.netEnergySeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        net: point.value,
       });
     }
 
@@ -503,12 +576,16 @@ export default function InsightsPage() {
 
     const weightIndex = toIndexSeries(mergedTrendData.map((row) => row.weightKg));
     const caloriesIndex = toIndexSeries(mergedTrendData.map((row) => row.calories));
+    const spendIndex = toIndexSeries(mergedTrendData.map((row) => row.spend));
+    const netIndex = toIndexSeries(mergedTrendData.map((row) => row.net));
     const strengthIndex = toIndexSeries(mergedTrendData.map((row) => row.strength));
 
     return mergedTrendData.map((row, idx) => ({
       ...row,
       weightIdx: weightIndex[idx],
       caloriesIdx: caloriesIndex[idx],
+      spendIdx: spendIndex[idx],
+      netIdx: netIndex[idx],
       strengthIdx: strengthIndex[idx],
     }));
   }, [mergedTrendData]);
@@ -776,6 +853,24 @@ export default function InsightsPage() {
         }));
     }
 
+    if (metric === "spend") {
+      return [...filteredSeries.metabolicActivitySeries]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map((point) => ({
+          date: point.date,
+          value: `${Math.round(point.value)} kcal`,
+        }));
+    }
+
+    if (metric === "net") {
+      return [...filteredSeries.netEnergySeries]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map((point) => ({
+          date: point.date,
+          value: `${Math.round(point.value)} kcal`,
+        }));
+    }
+
     return [...filteredSeries.strengthSeries]
       .sort((a, b) => b.date.localeCompare(a.date))
       .map((point) => ({
@@ -803,11 +898,16 @@ export default function InsightsPage() {
       rightName = "Strength";
       for (const point of filteredSeries.caloriesSeries) byDateLeft.set(point.date, point.value);
       for (const point of filteredSeries.strengthSeries) byDateRight.set(point.date, point.value);
-    } else if (label === "Calories ↔ Bodyweight") {
-      leftName = "Calories";
+    } else if (label === "Net Energy (lag 3d) ↔ Bodyweight" || label === "Net Energy (lag 7d) ↔ Bodyweight") {
+      leftName = "Net";
       rightName = "Weight";
-      for (const point of filteredSeries.caloriesSeries) byDateLeft.set(point.date, point.value);
+      for (const point of filteredSeries.netEnergySeries) byDateLeft.set(point.date, point.value);
       for (const point of filteredSeries.bodyweightSeries) byDateRight.set(point.date, point.value);
+    } else if (label === "Spend Consistency ↔ Workout Consistency") {
+      leftName = "Spend logged";
+      rightName = "Workout logged";
+      for (const point of filteredSeries.metabolicActivitySeries) byDateLeft.set(point.date, 1);
+      for (const point of filteredSeries.strengthSeries) byDateRight.set(point.date, 1);
     } else {
       leftName = "Strength";
       rightName = "Weight";
@@ -819,7 +919,7 @@ export default function InsightsPage() {
       .filter(([date]) => byDateRight.has(date))
       .map(([date, leftValue]) => ({
         date,
-        value: `${leftName}: ${leftName === "Calories" ? Math.round(leftValue) : leftValue.toFixed(1)}`,
+        value: `${leftName}: ${leftName === "Calories" || leftName === "Net" ? Math.round(leftValue) : leftValue.toFixed(1)}`,
         note: `${rightName}: ${rightName === "Weight" ? byDateRight.get(date)!.toFixed(1) : byDateRight.get(date)!.toFixed(1)}`,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
@@ -835,6 +935,8 @@ export default function InsightsPage() {
     const metric: MetricId | "all" =
       /bodyweight|weigh/i.test(text) ? "weight" :
       /calories|fuel/i.test(text) ? "calories" :
+      /burn|metabolic|spend/i.test(text) ? "spend" :
+      /net\s*energy|surplus|deficit/i.test(text) ? "net" :
       /strength|workout|recovery|deload/i.test(text) ? "strength" :
       "all";
 
@@ -843,7 +945,7 @@ export default function InsightsPage() {
         .map((item) => ({
           date: item.date,
           value: `Weight ${item.weightKg != null ? item.weightKg.toFixed(1) : "—"} kg`,
-          note: `Calories ${item.calories != null ? Math.round(item.calories) : "—"} | Strength ${item.strength != null ? item.strength.toFixed(1) : "—"}`,
+          note: `Calories ${item.calories != null ? Math.round(item.calories) : "—"} | Burn ${item.spend != null ? Math.round(item.spend) : "—"} | Net ${item.net != null ? Math.round(item.net) : "—"} | Strength ${item.strength != null ? item.strength.toFixed(1) : "—"}`,
         }))
         .sort((a, b) => b.date.localeCompare(a.date));
 
@@ -873,7 +975,7 @@ export default function InsightsPage() {
             : "Performance Intelligence"}
         </h1>
         <p className="mt-2 max-w-3xl text-zinc-300">
-          We connect bodyweight, calories, and strength trends to surface what is working and where to improve.
+          We connect bodyweight, intake, estimated burn, net energy, and strength trends to surface what is working and where to improve.
         </p>
 
         {msg && <p className="mt-4 text-sm text-red-300">{msg}</p>}
@@ -895,29 +997,19 @@ export default function InsightsPage() {
           ))}
         </div>
 
-        <div className="mt-4 rounded-2xl border border-zinc-700/80 bg-zinc-900/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Unlock Next Insights</p>
-          {coachingItems.length === 0 ? (
-            <p className="mt-2 text-sm text-emerald-300">All core insight types are unlocked for this range.</p>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {coachingItems.map((item) => (
-                <p key={item.id} className="rounded-lg border border-zinc-700/70 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-200">
-                  {item.message}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-[radial-gradient(circle_at_15%_15%,rgba(245,158,11,0.16),transparent_32%),radial-gradient(circle_at_85%_20%,rgba(59,130,246,0.14),transparent_35%),rgba(24,24,27,0.74)] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_10px_40px_rgba(0,0,0,0.35)] backdrop-blur-md">
+        <div className="relative mt-6 overflow-hidden rounded-3xl border border-amber-300/25 bg-zinc-900/75 p-5 shadow-[0_0_0_1px_rgba(251,191,36,0.10),0_18px_48px_rgba(0,0,0,0.38)] backdrop-blur-md">
+          <div className="pointer-events-none absolute inset-0">
+            <div className="absolute -top-16 left-10 h-44 w-44 rounded-full bg-amber-400/10 blur-3xl" />
+            <div className="absolute -right-10 top-8 h-40 w-40 rounded-full bg-emerald-400/10 blur-3xl" />
+            <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(251,191,36,0.05),transparent_38%,rgba(255,255,255,0.03)_52%,transparent_70%)]" />
+          </div>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">Ask + Suggested Actions</h2>
               <p className="mt-1 text-sm text-zinc-300">Ask about trends and convert detected patterns into a concrete plan.</p>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-zinc-700/70 bg-zinc-900/70 px-3 py-1 text-xs text-zinc-300">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-zinc-900/80 px-3 py-1 text-xs text-zinc-200 shadow-[0_0_0_1px_rgba(251,191,36,0.12)]">
+              <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.9)]" />
               AI ready with your history
             </div>
           </div>
@@ -925,7 +1017,7 @@ export default function InsightsPage() {
           {assistantError && <p className="mt-3 text-xs text-red-300">{assistantError}</p>}
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
-            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/45 p-4">
+            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] lg:flex lg:h-[30rem] lg:flex-col lg:overflow-hidden">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Ask</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {QUICK_PROMPTS.map((prompt) => (
@@ -940,10 +1032,10 @@ export default function InsightsPage() {
                 ))}
               </div>
 
-              <div className="mt-4 max-h-80 space-y-3 overflow-y-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-3">
+              <div className="mt-4 space-y-3 overflow-y-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-3 lg:min-h-0 lg:flex-1">
                 {assistantThread.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-zinc-700/70 bg-zinc-900/40 px-3 py-3 text-sm text-zinc-400">
-                    Try one of the quick prompts above, or ask anything about your calories, bodyweight, and strength history.
+                    Try one of the quick prompts above, or ask anything about intake, burn, net energy, bodyweight, and strength history.
                   </div>
                 ) : (
                   assistantThread.map((message, index) => (
@@ -1023,9 +1115,9 @@ export default function InsightsPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/45 p-4">
+            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] flex h-full flex-col overflow-hidden lg:h-[30rem]">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Suggested Actions</p>
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {suggestedActions.map((action) => (
                   <div key={action.id} className="rounded-xl border border-zinc-700/70 bg-zinc-900/70 p-3">
                     <p className="text-sm font-semibold text-zinc-100">{action.title}</p>
@@ -1053,25 +1145,79 @@ export default function InsightsPage() {
           </div>
         </div>
 
+        <div className="mt-6 rounded-2xl border border-zinc-700/80 bg-zinc-900/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Unlock Next Insights</p>
+          {coachingItems.length === 0 ? (
+            <p className="mt-2 text-sm text-emerald-300">All core insight types are unlocked for this range.</p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {coachingItems.map((item) => (
+                <p key={item.id} className="rounded-lg border border-zinc-700/70 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-200">
+                  {item.message}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
           {rangeInsights.facts.map((fact) => (
-            <button
+            <div
               key={fact.label}
-              type="button"
               onClick={() =>
                 openMetricDrilldown(
                   fact.label,
-                  fact.label === "Latest Weight" ? "weight" : fact.label === "Latest Calories" ? "calories" : "strength",
+                  fact.label === "Latest Weight"
+                    ? "weight"
+                    : fact.label === "Latest Calories"
+                      ? "calories"
+                      : fact.label === "Latest Burn"
+                        ? "spend"
+                        : fact.label === "Latest Net Energy"
+                          ? "net"
+                          : "strength",
                   `${fact.detail}. Raw logs for ${selectedRangeConfig.label}.`
                 )
               }
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openMetricDrilldown(
+                    fact.label,
+                    fact.label === "Latest Weight"
+                      ? "weight"
+                      : fact.label === "Latest Calories"
+                        ? "calories"
+                        : fact.label === "Latest Burn"
+                          ? "spend"
+                          : fact.label === "Latest Net Energy"
+                            ? "net"
+                            : "strength",
+                    `${fact.detail}. Raw logs for ${selectedRangeConfig.label}.`
+                  );
+                }
+              }}
+              role="button"
+              tabIndex={0}
               className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 text-left backdrop-blur-sm transition hover:border-amber-300/50 hover:bg-zinc-900/90"
             >
               <p className="text-xs uppercase tracking-wide text-zinc-400">{fact.label}</p>
-              <p className="mt-2 text-2xl font-semibold text-white">{loading ? "..." : fact.value}</p>
+              <p className="mt-2 text-2xl font-semibold text-white">
+                {loading
+                  ? "..."
+                  : fact.label === "Latest Weight"
+                    ? (() => {
+                        const latestWeightKg = filteredSeries.bodyweightSeries.at(-1)?.value;
+                        if (latestWeightKg == null || !Number.isFinite(latestWeightKg)) return "—";
+                        return `${(latestWeightKg * LB_PER_KG).toFixed(1)} lb`;
+                      })()
+                    : fact.value}
+              </p>
               <p className="mt-1 text-xs text-zinc-400">{fact.detail}</p>
-              <p className="mt-2 text-[11px] text-amber-200/80">Click to view underlying logs</p>
-            </button>
+              <p className="mt-2 text-[11px] text-amber-200/80 underline underline-offset-2">
+                Click to view underlying logs
+              </p>
+            </div>
           ))}
         </div>
 
@@ -1088,14 +1234,22 @@ export default function InsightsPage() {
                 <button
                   type="button"
                   onClick={() => setChartMode("index")}
-                  className={`rounded-full px-3 py-1 transition ${chartMode === "index" ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
+                  className={`rounded-full px-3 py-1 transition ${
+                    chartMode === "index"
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800"
+                  }`}
                 >
                   Index
                 </button>
                 <button
                   type="button"
                   onClick={() => setChartMode("raw")}
-                  className={`rounded-full px-3 py-1 transition ${chartMode === "raw" ? "bg-zinc-100 text-zinc-900" : "text-zinc-300 hover:bg-zinc-800"}`}
+                  className={`rounded-full px-3 py-1 transition ${
+                    chartMode === "raw"
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800"
+                  }`}
                 >
                   Raw
                 </button>
@@ -1140,7 +1294,7 @@ export default function InsightsPage() {
                         width={52}
                       />
                       <YAxis
-                        yAxisId="calories"
+                        yAxisId="energy"
                         orientation="right"
                         tick={{ fill: "#fcd34d", fontSize: 11 }}
                         tickLine={false}
@@ -1159,6 +1313,8 @@ export default function InsightsPage() {
                       if (chartMode === "index") return [`${value.toFixed(1)} idx`, name];
                       if (name?.toString().toLowerCase().includes("weight")) return [`${value.toFixed(1)} kg`, name];
                       if (name?.toString().toLowerCase().includes("calories")) return [`${Math.round(value)} kcal`, name];
+                      if (name?.toString().toLowerCase().includes("burn")) return [`${Math.round(value)} kcal`, name];
+                      if (name?.toString().toLowerCase().includes("net")) return [`${Math.round(value)} kcal`, name];
                       return [`${value.toFixed(1)}`, name];
                     }}
                   />
@@ -1177,9 +1333,30 @@ export default function InsightsPage() {
                     type="monotone"
                     dataKey={chartMode === "index" ? "caloriesIdx" : "calories"}
                     name={chartMode === "index" ? "Calories Index" : "Calories"}
-                    yAxisId={chartMode === "index" ? undefined : "calories"}
+                    yAxisId={chartMode === "index" ? undefined : "energy"}
                     stroke="#f59e0b"
                     strokeWidth={2.5}
+                    dot={{ r: 2 }}
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey={chartMode === "index" ? "spendIdx" : "spend"}
+                    name={chartMode === "index" ? "Burn Index" : "Estimated Burn"}
+                    yAxisId={chartMode === "index" ? undefined : "energy"}
+                    stroke="#22c55e"
+                    strokeWidth={2.5}
+                    dot={{ r: 2 }}
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey={chartMode === "index" ? "netIdx" : "net"}
+                    name={chartMode === "index" ? "Net Index" : "Net Energy"}
+                    yAxisId={chartMode === "index" ? undefined : "energy"}
+                    stroke="#38bdf8"
+                    strokeWidth={2.5}
+                    strokeDasharray="5 3"
                     dot={{ r: 2 }}
                     connectNulls
                   />
@@ -1244,17 +1421,17 @@ export default function InsightsPage() {
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-              <h2 className="text-lg font-semibold text-white">Correlation Snapshot</h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                Pearson r shown when overlap is at least 3 days. Confidence is based on overlap sample size.
-              </p>
-              <div className="mt-3 space-y-3">
+            <h2 className="text-lg font-semibold text-white">Correlation Snapshot</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              Pearson r shown when overlap is at least 3 days. Confidence is based on overlap sample size.
+            </p>
+            <div className="mt-3 space-y-3">
               {rangeInsights.correlations.map((item) => (
                 <button
                   key={item.label}
                   type="button"
                   onClick={() => openCorrelationDrilldown(item.label)}
-                  className="w-full rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3 text-left transition hover:border-amber-300/50 hover:bg-zinc-900/70"
+                  className="flex min-h-[172px] w-full flex-col rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3 text-left transition hover:border-amber-300/50 hover:bg-zinc-900/70"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-zinc-100">{item.label}</p>
@@ -1281,30 +1458,12 @@ export default function InsightsPage() {
                   })()}
                   <p className="mt-1 text-xs text-zinc-300">{item.interpretation}</p>
                   <p className="mt-1 text-xs text-zinc-500">Overlap days: {item.overlapDays}</p>
-                  <p className="mt-2 text-[11px] text-amber-200/80">Click to view overlap-day raw values</p>
+                  <p className="mt-auto pt-2 text-[11px] text-amber-200/80">Click to view overlap-day raw values</p>
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-            <h2 className="text-lg font-semibold text-white">Where To Improve</h2>
-            <div className="mt-3 space-y-2">
-              {rangeInsights.improvements.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => openTextInsightDrilldown("Where To Improve", item)}
-                  className="w-full rounded-xl border border-zinc-700/70 bg-zinc-950/40 px-3 py-2 text-left text-sm text-zinc-200 transition hover:border-amber-300/50 hover:bg-zinc-900/70"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
             <h2 className="text-lg font-semibold text-white">Top Achievements</h2>
             <div className="mt-3 space-y-3">
@@ -1313,27 +1472,11 @@ export default function InsightsPage() {
                   key={`${item.period}-${item.title}`}
                   type="button"
                   onClick={() => openTextInsightDrilldown(item.title, item.detail)}
-                  className="w-full rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3 text-left transition hover:border-amber-300/50 hover:bg-zinc-900/70"
+                  className="flex min-h-[128px] w-full flex-col rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3 text-left transition hover:border-amber-300/50 hover:bg-zinc-900/70"
                 >
                   <p className="text-xs uppercase tracking-wide text-zinc-400">{item.period}</p>
                   <p className="mt-1 text-sm font-medium text-zinc-100">{item.title}</p>
                   <p className="mt-1 text-xs text-zinc-300">{item.detail}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-            <h2 className="text-lg font-semibold text-white">Suggestions</h2>
-            <div className="mt-3 space-y-2">
-              {rangeInsights.suggestions.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => openTextInsightDrilldown("Suggestion", item)}
-                  className="w-full rounded-xl border border-zinc-700/70 bg-zinc-950/40 px-3 py-2 text-left text-sm text-zinc-200 transition hover:border-amber-300/50 hover:bg-zinc-900/70"
-                >
-                  {item}
                 </button>
               ))}
             </div>

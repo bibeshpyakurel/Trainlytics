@@ -32,6 +32,8 @@ export type InsightsData = {
   suggestions: string[];
   bodyweightSeries: InsightMetricPoint[];
   caloriesSeries: InsightMetricPoint[];
+  metabolicActivitySeries: InsightMetricPoint[];
+  netEnergySeries: InsightMetricPoint[];
   strengthSeries: InsightMetricPoint[];
 };
 

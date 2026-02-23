@@ -38,6 +38,9 @@ type ExerciseMetaRow = { id: string; name: string; muscle_group: string };
 type LatestWorkoutRow = { session_date: string; split: DashboardData["latestWorkout"] extends infer T ? T extends { split: infer S } ? S : never : never } | null;
 type LatestBodyweightRow = { log_date: string; weight_input: number; unit_input: DashboardData["latestBodyweight"] extends infer T ? T extends { unit_input: infer U } ? U : never : never } | null;
 type LatestCaloriesRow = { log_date: string; pre_workout_kcal: number | null; post_workout_kcal: number | null } | null;
+type LatestMetabolicRow = { log_date: string; estimated_kcal_spent: number } | null;
+type CaloriesByDateRow = { log_date: string; pre_workout_kcal: number | null; post_workout_kcal: number | null };
+type MetabolicByDateRow = { log_date: string; estimated_kcal_spent: number };
 
 export function getDashboardWindowStartIso(window: DashboardChartWindow): string | null {
   if (window === "90d") return getLocalIsoDateDaysAgo(89);
@@ -98,6 +101,11 @@ export function buildDashboardDataFromResults(input: {
   latestWorkout: LatestWorkoutRow;
   latestBodyweight: LatestBodyweightRow;
   latestCalories: LatestCaloriesRow;
+  latestMetabolicBurn: LatestMetabolicRow;
+  caloriesSeriesRows: CaloriesByDateRow[];
+  metabolicSeriesRows: MetabolicByDateRow[];
+  calories7dRows: CaloriesByDateRow[];
+  metabolic7dRows: MetabolicByDateRow[];
   workoutSetRows: WorkoutSetRowForStrength[];
   workoutSessions: WorkoutSessionRow[];
   exercises: ExerciseMetaRow[];
@@ -138,12 +146,59 @@ export function buildDashboardDataFromResults(input: {
     exerciseNamesByCategory[category].push(exerciseName);
   }
 
+  const intakeByDate = new Map<string, number>();
+  for (const row of input.caloriesSeriesRows) {
+    intakeByDate.set(row.log_date, Number(row.pre_workout_kcal ?? 0) + Number(row.post_workout_kcal ?? 0));
+  }
+
+  const spendByDate = new Map<string, number>();
+  for (const row of input.metabolicSeriesRows) {
+    spendByDate.set(row.log_date, Number(row.estimated_kcal_spent));
+  }
+
+  const unionDates = new Set<string>([...intakeByDate.keys(), ...spendByDate.keys()]);
+  const energyBalanceSeries = [...unionDates]
+    .sort((a, b) => a.localeCompare(b))
+    .map((date) => {
+      const intake = intakeByDate.get(date) ?? null;
+      const spend = spendByDate.get(date) ?? null;
+      return {
+        date,
+        intakeKcal: intake,
+        spendKcal: spend,
+        netKcal: intake != null && spend != null ? intake - spend : null,
+      };
+    });
+
+  const calories7dValues = input.calories7dRows.map((row) => Number(row.pre_workout_kcal ?? 0) + Number(row.post_workout_kcal ?? 0));
+  const metabolic7dValues = input.metabolic7dRows.map((row) => Number(row.estimated_kcal_spent));
+  const avgCalories7d = calories7dValues.length
+    ? calories7dValues.reduce((sum, value) => sum + value, 0) / calories7dValues.length
+    : null;
+  const avgBurn7d = metabolic7dValues.length
+    ? metabolic7dValues.reduce((sum, value) => sum + value, 0) / metabolic7dValues.length
+    : null;
+  const netEnergy7d = avgCalories7d != null && avgBurn7d != null ? avgCalories7d - avgBurn7d : null;
+
+  const bothLoggedDays = energyBalanceSeries.reduce((count, row) => (
+    row.intakeKcal != null && row.spendKcal != null ? count + 1 : count
+  ), 0);
+  const energyDataCompletenessPct = energyBalanceSeries.length > 0
+    ? (bothLoggedDays / energyBalanceSeries.length) * 100
+    : 0;
+
   return {
     email: input.userEmail ?? "Athlete",
     firstName: input.firstName,
     latestWorkout: input.latestWorkout,
     latestBodyweight: input.latestBodyweight,
     latestCalories: input.latestCalories,
+    latestMetabolicBurn: input.latestMetabolicBurn,
+    avgCalories7d,
+    avgBurn7d,
+    netEnergy7d,
+    energyDataCompletenessPct,
+    energyBalanceSeries,
     strengthAggregationMode: DEFAULT_STRENGTH_AGGREGATION_MODE,
     trackedMuscleGroups: muscleGroupDatasets.muscleGroups,
     muscleGroupStrengthSeries: muscleGroupDatasets.seriesByMuscleGroup,
@@ -175,7 +230,27 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
     workoutSessionsQuery = workoutSessionsQuery.gte("session_date", windowStartIso);
   }
 
-  const [latestWorkoutRes, latestBodyweightRes, latestCaloriesRes, workoutSessionsRes, exercisesRes, profileRes] =
+  let caloriesSeriesQuery = supabase
+    .from(TABLES.caloriesLogs)
+    .select("log_date,pre_workout_kcal,post_workout_kcal")
+    .eq("user_id", userId)
+    .order("log_date", { ascending: true });
+  if (windowStartIso) {
+    caloriesSeriesQuery = caloriesSeriesQuery.gte("log_date", windowStartIso);
+  }
+
+  let metabolicSeriesQuery = supabase
+    .from(TABLES.metabolicActivityLogs)
+    .select("log_date,estimated_kcal_spent")
+    .eq("user_id", userId)
+    .order("log_date", { ascending: true });
+  if (windowStartIso) {
+    metabolicSeriesQuery = metabolicSeriesQuery.gte("log_date", windowStartIso);
+  }
+
+  const sevenDaysAgoIso = getLocalIsoDateDaysAgo(6);
+
+  const [latestWorkoutRes, latestBodyweightRes, latestCaloriesRes, latestMetabolicRes, caloriesSeriesRes, metabolicSeriesRes, calories7dRes, metabolic7dRes, workoutSessionsRes, exercisesRes, profileRes] =
     await Promise.all([
       supabase
         .from(TABLES.workoutSessions)
@@ -198,6 +273,25 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
         .order("log_date", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      supabase
+        .from(TABLES.metabolicActivityLogs)
+        .select("log_date,estimated_kcal_spent")
+        .eq("user_id", userId)
+        .order("log_date", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      caloriesSeriesQuery,
+      metabolicSeriesQuery,
+      supabase
+        .from(TABLES.caloriesLogs)
+        .select("log_date,pre_workout_kcal,post_workout_kcal")
+        .eq("user_id", userId)
+        .gte("log_date", sevenDaysAgoIso),
+      supabase
+        .from(TABLES.metabolicActivityLogs)
+        .select("log_date,estimated_kcal_spent")
+        .eq("user_id", userId)
+        .gte("log_date", sevenDaysAgoIso),
       workoutSessionsQuery,
       supabase
         .from(TABLES.exercises)
@@ -225,6 +319,11 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
     latestWorkoutRes.error ||
     latestBodyweightRes.error ||
       latestCaloriesRes.error ||
+      latestMetabolicRes.error ||
+      caloriesSeriesRes.error ||
+      metabolicSeriesRes.error ||
+      calories7dRes.error ||
+      metabolic7dRes.error ||
       workoutSetsRes.error ||
       workoutSessionsRes.error ||
     exercisesRes.error
@@ -235,6 +334,11 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
         latestWorkoutRes.error?.message ||
         latestCaloriesRes.error?.message ||
         latestBodyweightRes.error?.message ||
+        latestMetabolicRes.error?.message ||
+        caloriesSeriesRes.error?.message ||
+        metabolicSeriesRes.error?.message ||
+        calories7dRes.error?.message ||
+        metabolic7dRes.error?.message ||
         workoutSetsRes.error?.message ||
         workoutSessionsRes.error?.message ||
         exercisesRes.error?.message ||
@@ -252,6 +356,11 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
       latestWorkout: (latestWorkoutRes.data as DashboardData["latestWorkout"]) ?? null,
       latestBodyweight: (latestBodyweightRes.data as DashboardData["latestBodyweight"]) ?? null,
       latestCalories: (latestCaloriesRes.data as DashboardData["latestCalories"]) ?? null,
+      latestMetabolicBurn: (latestMetabolicRes.data as DashboardData["latestMetabolicBurn"]) ?? null,
+      caloriesSeriesRows: (caloriesSeriesRes.data ?? []) as CaloriesByDateRow[],
+      metabolicSeriesRows: (metabolicSeriesRes.data ?? []) as MetabolicByDateRow[],
+      calories7dRows: (calories7dRes.data ?? []) as CaloriesByDateRow[],
+      metabolic7dRows: (metabolic7dRes.data ?? []) as MetabolicByDateRow[],
       workoutSetRows: (workoutSetsRes.data ?? []) as WorkoutSetRowForStrength[],
       workoutSessions: (workoutSessionsRes.data ?? []) as WorkoutSessionRow[],
       exercises: (exercisesRes.data ?? []) as ExerciseMetaRow[],

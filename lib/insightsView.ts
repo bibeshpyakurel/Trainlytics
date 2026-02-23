@@ -9,6 +9,8 @@ import { getLocalIsoDateDaysAgo } from "@/lib/localDate";
 type BuildInsightsViewInput = {
   bodyweightSeries: InsightMetricPoint[];
   caloriesSeries: InsightMetricPoint[];
+  metabolicActivitySeries: InsightMetricPoint[];
+  netEnergySeries: InsightMetricPoint[];
   strengthSeries: InsightMetricPoint[];
 };
 
@@ -99,6 +101,44 @@ function pearsonCorrelation(
   };
 }
 
+function pearsonCorrelationWithLag(
+  leftSeries: InsightMetricPoint[],
+  rightSeries: InsightMetricPoint[],
+  lagDays: number
+): { value: number | null; overlapDays: number } {
+  const shiftedRightSeries = rightSeries.map((point) => {
+    const date = new Date(`${point.date}T00:00:00`);
+    date.setDate(date.getDate() - lagDays);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return { date: `${year}-${month}-${day}`, value: point.value };
+  });
+
+  return pearsonCorrelation(leftSeries, shiftedRightSeries);
+}
+
+function buildPresenceSeries(
+  sourceSeries: InsightMetricPoint[],
+  startIso: string,
+  endIso: string
+): InsightMetricPoint[] {
+  const sourceDates = new Set(sourceSeries.map((point) => point.date));
+  const startDate = new Date(`${startIso}T00:00:00`);
+  const endDate = new Date(`${endIso}T00:00:00`);
+  const output: InsightMetricPoint[] = [];
+
+  for (const date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const iso = `${year}-${month}-${day}`;
+    output.push({ date: iso, value: sourceDates.has(iso) ? 1 : 0 });
+  }
+
+  return output;
+}
+
 function correlationInterpretation(value: number | null): string {
   if (value == null) return "Not enough overlapping days yet (need at least 3 overlapping days).";
   const magnitude = Math.abs(value);
@@ -134,12 +174,15 @@ function findMaxPoint(series: InsightMetricPoint[]): InsightMetricPoint | null {
 function buildFacts(input: BuildInsightsViewInput, options?: BuildInsightsViewOptions): InsightFact[] {
   const latestWeight = sortByDateAsc(input.bodyweightSeries).at(-1)?.value ?? null;
   const latestCalories = sortByDateAsc(input.caloriesSeries).at(-1)?.value ?? null;
+  const latestBurn = sortByDateAsc(input.metabolicActivitySeries).at(-1)?.value ?? null;
+  const latestNet = sortByDateAsc(input.netEnergySeries).at(-1)?.value ?? null;
   const latestStrength = sortByDateAsc(input.strengthSeries).at(-1)?.value ?? null;
 
   if (options && options.rangeDays !== undefined) {
     const rangeLabel = options.rangeLabel ?? "selected range";
     const weightLogs = input.bodyweightSeries.length;
     const caloriesLogs = input.caloriesSeries.length;
+    const burnLogs = input.metabolicActivitySeries.length;
     const strengthLogs = input.strengthSeries.length;
 
     return [
@@ -154,6 +197,16 @@ function buildFacts(input: BuildInsightsViewInput, options?: BuildInsightsViewOp
         detail: `${caloriesLogs} calories logs in ${rangeLabel}`,
       },
       {
+        label: "Latest Burn",
+        value: latestBurn != null ? `${Math.round(latestBurn)} kcal` : "—",
+        detail: `${burnLogs} burn logs in ${rangeLabel}`,
+      },
+      {
+        label: "Latest Net Energy",
+        value: latestNet != null ? `${Math.round(latestNet)} kcal` : "—",
+        detail: `net intake - burn in ${rangeLabel}`,
+      },
+      {
         label: "Latest Strength",
         value: latestStrength != null ? latestStrength.toFixed(1) : "—",
         detail: `${strengthLogs} strength days in ${rangeLabel}`,
@@ -164,6 +217,7 @@ function buildFacts(input: BuildInsightsViewInput, options?: BuildInsightsViewOp
   const last14Days = getLastNDatesSet(14);
   const weightLogs14 = filterByDates(input.bodyweightSeries, last14Days).length;
   const caloriesLogs14 = filterByDates(input.caloriesSeries, last14Days).length;
+  const burnLogs14 = filterByDates(input.metabolicActivitySeries, last14Days).length;
   const strengthLogs14 = filterByDates(input.strengthSeries, last14Days).length;
 
   return [
@@ -178,6 +232,16 @@ function buildFacts(input: BuildInsightsViewInput, options?: BuildInsightsViewOp
       detail: `${caloriesLogs14} calories logs in last 14 days`,
     },
     {
+      label: "Latest Burn",
+      value: latestBurn != null ? `${Math.round(latestBurn)} kcal` : "—",
+      detail: `${burnLogs14} burn logs in last 14 days`,
+    },
+    {
+      label: "Latest Net Energy",
+      value: latestNet != null ? `${Math.round(latestNet)} kcal` : "—",
+      detail: "Net intake - burn on overlap days",
+    },
+    {
       label: "Latest Strength",
       value: latestStrength != null ? latestStrength.toFixed(1) : "—",
       detail: `${strengthLogs14} strength days in last 14 days`,
@@ -187,8 +251,20 @@ function buildFacts(input: BuildInsightsViewInput, options?: BuildInsightsViewOp
 
 function buildCorrelations(input: BuildInsightsViewInput): InsightCorrelation[] {
   const caloriesVsStrength = pearsonCorrelation(input.caloriesSeries, input.strengthSeries);
-  const caloriesVsWeight = pearsonCorrelation(input.caloriesSeries, input.bodyweightSeries);
+  const netLag3VsWeight = pearsonCorrelationWithLag(input.netEnergySeries, input.bodyweightSeries, 3);
+  const netLag7VsWeight = pearsonCorrelationWithLag(input.netEnergySeries, input.bodyweightSeries, 7);
   const strengthVsWeight = pearsonCorrelation(input.strengthSeries, input.bodyweightSeries);
+
+  const allDates = [...input.metabolicActivitySeries, ...input.strengthSeries].map((point) => point.date);
+  const minDate = allDates.sort()[0];
+  const maxDate = allDates.sort()[allDates.length - 1];
+  const spendPresence = minDate && maxDate
+    ? buildPresenceSeries(input.metabolicActivitySeries, minDate, maxDate)
+    : [];
+  const strengthPresence = minDate && maxDate
+    ? buildPresenceSeries(input.strengthSeries, minDate, maxDate)
+    : [];
+  const spendConsistencyVsWorkoutConsistency = pearsonCorrelation(spendPresence, strengthPresence);
 
   return [
     {
@@ -198,16 +274,28 @@ function buildCorrelations(input: BuildInsightsViewInput): InsightCorrelation[] 
       overlapDays: caloriesVsStrength.overlapDays,
     },
     {
-      label: "Calories ↔ Bodyweight",
-      value: caloriesVsWeight.value,
-      interpretation: correlationInterpretation(caloriesVsWeight.value),
-      overlapDays: caloriesVsWeight.overlapDays,
+      label: "Net Energy (lag 3d) ↔ Bodyweight",
+      value: netLag3VsWeight.value,
+      interpretation: correlationInterpretation(netLag3VsWeight.value),
+      overlapDays: netLag3VsWeight.overlapDays,
+    },
+    {
+      label: "Net Energy (lag 7d) ↔ Bodyweight",
+      value: netLag7VsWeight.value,
+      interpretation: correlationInterpretation(netLag7VsWeight.value),
+      overlapDays: netLag7VsWeight.overlapDays,
     },
     {
       label: "Strength ↔ Bodyweight",
       value: strengthVsWeight.value,
       interpretation: correlationInterpretation(strengthVsWeight.value),
       overlapDays: strengthVsWeight.overlapDays,
+    },
+    {
+      label: "Spend Consistency ↔ Workout Consistency",
+      value: spendConsistencyVsWorkoutConsistency.value,
+      interpretation: correlationInterpretation(spendConsistencyVsWorkoutConsistency.value),
+      overlapDays: spendConsistencyVsWorkoutConsistency.overlapDays,
     },
   ];
 }
@@ -300,6 +388,8 @@ function buildImprovements(input: BuildInsightsViewInput, options?: BuildInsight
     const rangeLabel = options.rangeLabel ?? "selected range";
     const weightLogs = input.bodyweightSeries.length;
     const caloriesLogs = input.caloriesSeries.length;
+    const metabolicLogs = input.metabolicActivitySeries.length;
+    const netLogs = input.netEnergySeries.length;
     const strengthLogs = input.strengthSeries.length;
     const items: string[] = [];
 
@@ -310,6 +400,7 @@ function buildImprovements(input: BuildInsightsViewInput, options?: BuildInsight
     } else {
       const expectedWeightLogs = Math.max(3, Math.ceil(options.rangeDays * 0.4));
       const expectedCaloriesLogs = Math.max(4, Math.ceil(options.rangeDays * 0.55));
+      const expectedMetabolicLogs = Math.max(4, Math.ceil(options.rangeDays * 0.55));
       const expectedStrengthLogs = Math.max(2, Math.ceil(options.rangeDays * 0.25));
 
       if (weightLogs < expectedWeightLogs) {
@@ -318,8 +409,14 @@ function buildImprovements(input: BuildInsightsViewInput, options?: BuildInsight
       if (caloriesLogs < expectedCaloriesLogs) {
         items.push(`Track calories on more days (target: ${expectedCaloriesLogs}+ logs in ${rangeLabel}).`);
       }
+      if (metabolicLogs < expectedMetabolicLogs) {
+        items.push(`Track estimated burn on more days (target: ${expectedMetabolicLogs}+ logs in ${rangeLabel}).`);
+      }
       if (strengthLogs < expectedStrengthLogs) {
         items.push(`Log more workout sessions (target: ${expectedStrengthLogs}+ strength days in ${rangeLabel}).`);
+      }
+      if (netLogs < 3) {
+        items.push(`Not enough overlap days for net-energy insights (need at least 3 days in ${rangeLabel}).`);
       }
     }
 
@@ -343,12 +440,16 @@ function buildImprovements(input: BuildInsightsViewInput, options?: BuildInsight
   const last14Days = getLastNDatesSet(14);
   const weightLogs14 = filterByDates(input.bodyweightSeries, last14Days).length;
   const caloriesLogs14 = filterByDates(input.caloriesSeries, last14Days).length;
+  const metabolicLogs14 = filterByDates(input.metabolicActivitySeries, last14Days).length;
   const strengthLogs14 = filterByDates(input.strengthSeries, last14Days).length;
+  const netLogs14 = filterByDates(input.netEnergySeries, last14Days).length;
 
   const items: string[] = [];
   if (weightLogs14 < 6) items.push("Log bodyweight more consistently (target: 6+ logs per 14 days).");
   if (caloriesLogs14 < 8) items.push("Track calories on more training days (target: 8+ logs per 14 days).");
+  if (metabolicLogs14 < 8) items.push("Track estimated burn on more days (target: 8+ logs per 14 days).");
   if (strengthLogs14 < 4) items.push("Add more workout logging sessions to improve strength trend reliability.");
+  if (netLogs14 < 3) items.push("Not enough overlap days for net-energy insights (need at least 3 in 14 days).");
 
   const recentStrength = sortByDateAsc(filterByDates(input.strengthSeries, getLastNDatesSet(7))).map((point) => point.value);
   const priorStrength = sortByDateAsc(
@@ -384,15 +485,18 @@ function buildSuggestions(
   const spanDays = options?.rangeDays ?? Math.max(
     getSeriesSpanDays(input.bodyweightSeries),
     getSeriesSpanDays(input.caloriesSeries),
+    getSeriesSpanDays(input.metabolicActivitySeries),
     getSeriesSpanDays(input.strengthSeries)
   );
 
   const expectedWeightLogs = Math.max(3, Math.ceil(spanDays * 0.4));
   const expectedCaloriesLogs = Math.max(4, Math.ceil(spanDays * 0.55));
+  const expectedMetabolicLogs = Math.max(4, Math.ceil(spanDays * 0.55));
   const expectedStrengthLogs = Math.max(2, Math.ceil(spanDays * 0.25));
   const weightAdherence = expectedWeightLogs === 0 ? 1 : input.bodyweightSeries.length / expectedWeightLogs;
   const caloriesAdherence = expectedCaloriesLogs === 0 ? 1 : input.caloriesSeries.length / expectedCaloriesLogs;
   const strengthAdherence = expectedStrengthLogs === 0 ? 1 : input.strengthSeries.length / expectedStrengthLogs;
+  const metabolicAdherence = expectedMetabolicLogs === 0 ? 1 : input.metabolicActivitySeries.length / expectedMetabolicLogs;
 
   if (weightAdherence < 0.65) {
     suggestions.push(
@@ -402,6 +506,11 @@ function buildSuggestions(
   if (caloriesAdherence < 0.65) {
     suggestions.push(
       `Rule: Low calories adherence detected (${input.caloriesSeries.length}/${expectedCaloriesLogs} logs in ${rangeLabel}). Log pre/post-workout fuel on every training day for a cleaner performance signal.`
+    );
+  }
+  if (metabolicAdherence < 0.65) {
+    suggestions.push(
+      `Rule: Low burn adherence detected (${input.metabolicActivitySeries.length}/${expectedMetabolicLogs} logs in ${rangeLabel}). Log estimated daily burn from a consistent source.`
     );
   }
   if (strengthAdherence < 0.65) {
@@ -448,6 +557,40 @@ function buildSuggestions(
     );
   }
 
+  let deficitStreak = 0;
+  let surplusStreak = 0;
+  for (const point of sortByDateAsc(input.netEnergySeries)) {
+    if (point.value <= -700) {
+      deficitStreak += 1;
+      surplusStreak = 0;
+    } else if (point.value >= 500) {
+      surplusStreak += 1;
+      deficitStreak = 0;
+    } else {
+      deficitStreak = 0;
+      surplusStreak = 0;
+    }
+  }
+
+  if (deficitStreak >= 4) {
+    suggestions.push(
+      `Rule: Sustained large deficit (${deficitStreak} days <= -700 kcal). Add recovery calories to reduce fatigue and preserve performance.`
+    );
+  }
+
+  if (surplusStreak >= 5 && input.bodyweightSeries.length >= 4) {
+    const sortedWeights = sortByDateAsc(input.bodyweightSeries);
+    const firstHalf = sortedWeights.slice(0, Math.floor(sortedWeights.length / 2)).map((point) => point.value);
+    const secondHalf = sortedWeights.slice(Math.floor(sortedWeights.length / 2)).map((point) => point.value);
+    const firstAvg = average(firstHalf);
+    const secondAvg = average(secondHalf);
+    if (firstAvg != null && secondAvg != null && secondAvg - firstAvg >= 0.6) {
+      suggestions.push(
+        `Rule: Surplus + bodyweight rise detected (${surplusStreak} day surplus streak and +${(secondAvg - firstAvg).toFixed(1)} kg trend). Trim intake or increase activity slightly.`
+      );
+    }
+  }
+
   if (suggestions.length === 0) {
     suggestions.push("Rule: No adverse patterns detected. Keep current training and logging cadence, then reassess after one more week of data.");
   }
@@ -459,6 +602,8 @@ export function buildInsightsView(input: BuildInsightsViewInput, options?: Build
   const normalizedInput: BuildInsightsViewInput = {
     bodyweightSeries: sortByDateAsc(input.bodyweightSeries),
     caloriesSeries: sortByDateAsc(input.caloriesSeries),
+    metabolicActivitySeries: sortByDateAsc(input.metabolicActivitySeries),
+    netEnergySeries: sortByDateAsc(input.netEnergySeries),
     strengthSeries: sortByDateAsc(input.strengthSeries),
   };
 

@@ -50,7 +50,7 @@ function answerForAchievements(data: InsightsData): AssistantReply {
 
 function answerForSuggestions(data: InsightsData): AssistantReply {
   return {
-    answer: "These suggestions are generated from your own bodyweight, calories, and strength trends.",
+    answer: "These suggestions are generated from your bodyweight, intake, burn, net-energy, and strength trends.",
     bullets: data.suggestions,
   };
 }
