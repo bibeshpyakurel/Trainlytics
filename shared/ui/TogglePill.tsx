@@ -19,7 +19,9 @@ export default function TogglePill({
       onClick={onToggle}
       disabled={disabled}
       className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-60 ${
-        enabled ? "bg-emerald-400/20 text-emerald-300" : "bg-zinc-700/40 text-zinc-300"
+        enabled
+          ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+          : "bg-zinc-700/40 text-zinc-300"
       }`}
     >
       {enabled ? onLabel : offLabel}

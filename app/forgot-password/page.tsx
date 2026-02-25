@@ -10,6 +10,7 @@ import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
 import { ROUTES, getDefaultSignedInRoute } from "@/lib/routes";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { reportClientError } from "@/lib/monitoringClient";
+import { runAuthSessionPreflight } from "@/lib/authPreflight";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
@@ -18,6 +19,8 @@ const PASSWORD_RULES = [
   { label: "At least 1 number", test: (value: string) => /[0-9]/.test(value) },
   { label: "At least 1 special character", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
 ];
+const GENERIC_FORGOT_PASSWORD_MESSAGE =
+  "If an account exists for this email, we sent instructions to continue resetting your password.";
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -45,40 +48,21 @@ export default function ForgotPasswordPage() {
   }
 
   useEffect(() => {
-    let isMounted = true;
-    (async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!isMounted) return;
-
-      if (!sessionData.session) {
-        setCheckingSession(false);
-        return;
-      }
-
-      const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
-      router.replace(getDefaultSignedInRoute(launchAnimationEnabled));
-    })();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [router]);
-
-  async function checkEmailExists(targetEmail: string) {
-    const response = await fetch("/api/auth/account-status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: targetEmail }),
+    return runAuthSessionPreflight({
+      setCheckingSession,
+      requireUser: false,
+      onSessionError: (sessionError) => {
+        void reportClientError("auth.forgot_password.session_check_failed", sessionError, {
+          stage: "getSession",
+        });
+        showError("Could not verify your session. Please try again.");
+      },
+      onAuthenticated: () => {
+        const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
+        router.replace(getDefaultSignedInRoute(launchAnimationEnabled));
+      },
     });
-
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(payload?.error ?? "Could not verify account status.");
-    }
-
-    const payload = (await response.json()) as { exists?: boolean };
-    return !!payload.exists;
-  }
+  }, [router]);
 
   async function sendOtp() {
     const normalizedEmail = email.trim().toLowerCase();
@@ -89,22 +73,6 @@ export default function ForgotPasswordPage() {
 
     setLoading(true);
     setMsg(null);
-
-    try {
-      const exists = await checkEmailExists(normalizedEmail);
-      if (!exists) {
-        setLoading(false);
-        showError("No account exists with this email.");
-        return;
-      }
-    } catch (error) {
-      void reportClientError("auth.forgot_password.account_status_check_failed", error, {
-        stage: "account_status_fetch",
-      });
-      setLoading(false);
-      showError(error instanceof Error ? error.message : "Could not verify account status. Please try again.");
-      return;
-    }
 
     const { error } = await supabase.auth.signInWithOtp({
       email: normalizedEmail,
@@ -119,14 +87,12 @@ export default function ForgotPasswordPage() {
       void reportClientError("auth.forgot_password.send_otp_failed", error, {
         stage: "signInWithOtp",
       });
-      showError(`Could not send OTP: ${error.message}`);
-      return;
     }
 
     setVerificationEmail(normalizedEmail);
     setOtpVerified(false);
     setOtpCode("");
-    showSuccess("OTP sent. Enter the code from your email.");
+    showSuccess(GENERIC_FORGOT_PASSWORD_MESSAGE);
   }
 
   async function verifyOtp() {
@@ -147,7 +113,7 @@ export default function ForgotPasswordPage() {
     const { data, error } = await supabase.auth.verifyOtp({
       email: verificationEmail,
       token,
-      type: "recovery",
+      type: "email",
     });
 
     setLoading(false);

@@ -72,6 +72,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      metabolic_activity_logs: {
+        Row: {
+          created_at: string;
+          estimated_kcal_spent: number;
+          id: string;
+          log_date: string;
+          source: string | null;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          estimated_kcal_spent: number;
+          id?: string;
+          log_date: string;
+          source?: string | null;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          estimated_kcal_spent?: number;
+          id?: string;
+          log_date?: string;
+          source?: string | null;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       exercises: {
         Row: {
           created_at: string;

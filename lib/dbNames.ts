@@ -1,6 +1,7 @@
 export const TABLES = {
   bodyweightLogs: "bodyweight_logs",
   caloriesLogs: "calories_logs",
+  metabolicActivityLogs: "metabolic_activity_logs",
   exercises: "exercises",
   profiles: "profiles",
   workoutSessions: "workout_sessions",

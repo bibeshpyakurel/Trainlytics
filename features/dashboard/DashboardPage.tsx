@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DashboardData } from "@/lib/dashboardTypes";
-import { loadDashboardData } from "@/lib/dashboardService";
+import { loadDashboardData, type DashboardChartWindow } from "@/lib/dashboardService";
 import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { getDashboardViewModel } from "@/features/dashboard/view";
 import type {
   StrengthTimeSeriesPoint,
   TrackedMuscleGroup,
 } from "@/lib/dashboardStrength";
+import { LB_PER_KG, toKg } from "@/lib/convertWeight";
 import {
   CartesianGrid,
   Line,
@@ -35,9 +37,25 @@ function toChartData(series: StrengthTimeSeriesPoint[]) {
   }));
 }
 
+function toEnergyChartData(series: DashboardData["energyBalanceSeries"]) {
+  return series.map((point) => ({
+    ...point,
+    label: formatChartLabel(point.date),
+  }));
+}
+
 function getChartYMax(series: StrengthTimeSeriesPoint[]) {
   const max = series.length > 0 ? Math.max(...series.map((point) => point.score)) : 0;
   return Math.max(100, Math.ceil((max + 100) / 100) * 100);
+}
+
+function formatSummaryLineWithLb(line: string) {
+  return line.replace(/(\d+(?:\.\d+)?)×(\d+(?:\.\d+)?)/g, (_match, weightText, repsText) => {
+    const weight = Number(weightText);
+    if (!Number.isFinite(weight)) return `${weightText}×${repsText}`;
+    const weightLb = weight * LB_PER_KG;
+    return `${weightLb.toFixed(1)} lb × ${repsText}`;
+  });
 }
 
 function StrengthLineChart({
@@ -95,7 +113,7 @@ function StrengthLineChart({
                 {point.summaryLines && point.summaryLines.length > 0 && (
                   <div className="mt-1 max-w-xs space-y-1 text-zinc-300">
                     {point.summaryLines.map((line) => (
-                      <p key={line} className="leading-relaxed">{line}</p>
+                      <p key={line} className="leading-relaxed">{formatSummaryLineWithLb(line)}</p>
                     ))}
                   </div>
                 )}
@@ -143,12 +161,19 @@ const EXERCISE_CATEGORY_LABELS: Record<"push" | "pull" | "legs" | "core", string
   core: "Core",
 };
 
+const WINDOW_OPTIONS: Array<{ id: DashboardChartWindow; label: string }> = [
+  { id: "90d", label: "90 days" },
+  { id: "180d", label: "180 days" },
+  { id: "all", label: "All" },
+];
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
+  const [chartWindow, setChartWindow] = useState<DashboardChartWindow>("90d");
 
   useEffect(() => {
     let isMounted = true;
@@ -157,7 +182,7 @@ export default function DashboardPage() {
       setLoading(true);
       setMsg(null);
 
-      const result = await loadDashboardData();
+      const result = await loadDashboardData(chartWindow);
       if (!isMounted) return;
 
       if (result.status === "unauthenticated") {
@@ -180,7 +205,7 @@ export default function DashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [router]);
+  }, [router, chartWindow]);
 
   const effectiveSelectedExercise =
     data && data.exerciseNames.length > 0
@@ -191,6 +216,18 @@ export default function DashboardPage() {
 
   const selectedExerciseSeries =
     effectiveSelectedExercise && data ? data.exerciseStrengthSeries[effectiveSelectedExercise] ?? [] : [];
+  const viewModel = getDashboardViewModel({ loading, msg, data });
+
+  function getLatestWeightDisplayText() {
+    if (loading) return "Loading...";
+    if (!data?.latestBodyweight) return "No logs yet";
+
+    const rawValue = Number(data.latestBodyweight.weight_input);
+    const rawUnit = data.latestBodyweight.unit_input;
+    const valueInKg = toKg(rawValue, rawUnit);
+    const valueLb = valueInKg * LB_PER_KG;
+    return `${valueLb.toFixed(1)} lb · ${data.latestBodyweight.log_date}`;
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
@@ -202,9 +239,7 @@ export default function DashboardPage() {
       <div className="relative z-10 mx-auto w-full max-w-5xl px-6 py-10">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300/80">Dashboard</p>
-          <h1 className="mt-3 text-4xl font-bold text-white">
-            {data?.firstName?.trim() ? `Welcome Back, ${data.firstName.trim()} 💪` : "Welcome Back 💪"}
-          </h1>
+          <h1 className="mt-3 text-4xl font-bold text-white">{viewModel.welcomeTitle}</h1>
           <p className="mt-2 max-w-2xl text-zinc-300">
             Track progress, stay consistent, and keep building strength.
           </p>
@@ -213,37 +248,36 @@ export default function DashboardPage() {
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-zinc-400">Latest Workout</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {loading
-                ? "Loading..."
-                : data?.latestWorkout
-                  ? `${data.latestWorkout.split.toUpperCase()} · ${data.latestWorkout.session_date}`
-                  : "No workouts yet"}
-            </p>
+            <p className="mt-2 text-base font-semibold text-white">{viewModel.latestWorkoutText}</p>
           </div>
           <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-zinc-400">Latest Weight</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {loading
-                ? "Loading..."
-                : data?.latestBodyweight
-                  ? `${data.latestBodyweight.weight_input} ${data.latestBodyweight.unit_input} · ${data.latestBodyweight.log_date}`
-                  : "No logs yet"}
-            </p>
+            <p className="mt-2 text-base font-semibold text-white">{getLatestWeightDisplayText()}</p>
           </div>
           <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-zinc-400">Latest Calories</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {loading
-                ? "Loading..."
-                : data?.latestCalories
-                  ? `${(data.latestCalories.pre_workout_kcal ?? 0) + (data.latestCalories.post_workout_kcal ?? 0)} kcal · ${data.latestCalories.log_date}`
-                  : "No logs yet"}
-            </p>
+            <p className="mt-2 text-base font-semibold text-white">{viewModel.latestCaloriesText}</p>
           </div>
         </div>
 
-        {msg && <p className="mt-4 text-sm text-red-300">{msg}</p>}
+        {viewModel.errorMessage && <p className="mt-4 text-sm text-red-300">{viewModel.errorMessage}</p>}
+
+        <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1">
+          {WINDOW_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setChartWindow(option.id)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                chartWindow === option.id
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {(data?.trackedMuscleGroups ?? []).map((group) => {
@@ -273,10 +307,54 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+          <div className="flex flex-col gap-2">
+            <h2 className="text-lg font-semibold text-white">Energy Balance Trend</h2>
+            <p className="text-sm text-zinc-400">
+              Intake vs estimated burn and net energy ({WINDOW_OPTIONS.find((option) => option.id === chartWindow)?.label} window).
+            </p>
+          </div>
+          <div className="mt-4 h-72 w-full">
+            {toEnergyChartData(data?.energyBalanceSeries ?? []).length === 0 ? (
+              <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                No energy balance logs yet.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={toEnergyChartData(data?.energyBalanceSeries ?? [])} margin={{ top: 8, right: 20, left: 4, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                  <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                  <YAxis yAxisId="kcal" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} width={56} />
+                  <YAxis yAxisId="net" orientation="right" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} width={56} />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const row = payload[0]?.payload as { date: string; intakeKcal: number | null; spendKcal: number | null; netKcal: number | null };
+                      return (
+                        <div className="rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-200 shadow-lg">
+                          <p className="font-semibold text-zinc-100">{row.date}</p>
+                          <p className="mt-1 text-zinc-300">Intake: {row.intakeKcal != null ? `${Math.round(row.intakeKcal)} kcal` : "—"}</p>
+                          <p className="text-zinc-300">Burn: {row.spendKcal != null ? `${Math.round(row.spendKcal)} kcal` : "—"}</p>
+                          <p className="mt-1 font-semibold text-amber-300">Net: {row.netKcal != null ? `${Math.round(row.netKcal)} kcal` : "—"}</p>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Line type="monotone" yAxisId="kcal" dataKey="intakeKcal" stroke="#f59e0b" strokeWidth={2.5} dot={false} connectNulls />
+                  <Line type="monotone" yAxisId="kcal" dataKey="spendKcal" stroke="#22c55e" strokeWidth={2.5} dot={false} connectNulls />
+                  <Line type="monotone" yAxisId="net" dataKey="netKcal" stroke="#38bdf8" strokeWidth={2.5} strokeDasharray="5 3" dot={false} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">Exercise Strength Trend</h2>
-              <p className="mt-1 text-sm text-zinc-400">Select an exercise to view session strength over time.</p>
+              <p className="mt-1 text-sm text-zinc-400">
+                Select an exercise to view session strength over time ({WINDOW_OPTIONS.find((option) => option.id === chartWindow)?.label} window).
+              </p>
             </div>
 
             <select
@@ -371,7 +449,7 @@ export default function DashboardPage() {
             >
               <p className="text-sm text-zinc-400">Nutrition</p>
               <h2 className="mt-1 text-xl font-semibold text-white">Log Calories</h2>
-              <p className="mt-2 text-sm text-zinc-300">Track pre and post workout fuel.</p>
+              <p className="mt-2 text-sm text-zinc-300">Track intake and estimated burn in one place.</p>
             </Link>
           </div>
         </div>

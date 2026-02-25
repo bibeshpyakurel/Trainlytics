@@ -12,6 +12,7 @@ import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
 import { ROUTES, getDefaultSignedInRoute, getSafeProtectedNextRoute } from "@/lib/routes";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { reportClientError } from "@/lib/monitoringClient";
+import { runAuthSessionPreflight } from "@/lib/authPreflight";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
@@ -63,52 +64,21 @@ export default function SignUpPage() {
   }
 
   useEffect(() => {
-    let isMounted = true;
-    let timeoutId: number | null = null;
-
-    (async () => {
-      timeoutId = window.setTimeout(() => {
-        if (!isMounted) return;
-        setCheckingSession(false);
-      }, 3000);
-
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (!isMounted) return;
-
-      if (sessionError) {
+    return runAuthSessionPreflight({
+      setCheckingSession,
+      timeoutMs: 3000,
+      onSessionError: (sessionError) => {
         void reportClientError("auth.signup.session_check_failed", sessionError, { stage: "getSession" });
-        setCheckingSession(false);
         showError("Could not verify your session. Please try again.");
-        return;
-      }
-
-      if (!sessionData.session) {
-        setCheckingSession(false);
-        return;
-      }
-
-      const { data, error } = await supabase.auth.getUser();
-      if (!isMounted) return;
-
-      if (error || !data.user) {
-        setCheckingSession(false);
-        return;
-      }
-
-      if (data.user) {
+      },
+      onAuthenticated: () => {
         const launchAnimationEnabled =
           localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
         const nextParam = readNextParam();
         const nextRoute = getSafeProtectedNextRoute(nextParam);
         router.replace(nextRoute ?? getDefaultSignedInRoute(launchAnimationEnabled));
-        return;
-      }
-    })();
-
-    return () => {
-      isMounted = false;
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-    };
+      },
+    });
   }, [router]);
 
   async function signUp(e?: FormEvent<HTMLFormElement>) {
@@ -247,7 +217,7 @@ export default function SignUpPage() {
       verificationFirstName &&
       verificationLastName
     ) {
-      await supabase.from(TABLES.profiles).upsert(
+      const { error: profileError } = await supabase.from(TABLES.profiles).upsert(
         {
           user_id: sessionUserId,
           first_name: verificationFirstName,
@@ -255,6 +225,15 @@ export default function SignUpPage() {
         },
         { onConflict: "user_id" }
       );
+
+      if (profileError) {
+        void reportClientError("auth.signup.otp_profile_upsert_failed", profileError, {
+          stage: "otp_verify_profile_upsert",
+        });
+        setLoading(false);
+        showError("Email verified, but profile details could not be saved yet. Please update them in Profile.");
+        return;
+      }
 
       const seedError = await ensureDefaultExercisesForUser(sessionUserId);
       if (seedError) {

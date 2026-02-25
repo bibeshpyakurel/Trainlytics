@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Unit } from "@/lib/convertWeight";
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentSessionUser } from "@/lib/authSession";
 import { TABLES } from "@/lib/dbNames";
 import { ensureDefaultExercisesForUser } from "@/lib/defaultExercises";
 import { getDaysAgo, makeSetKey } from "@/features/log/formatters";
+import { createRequestVersionTracker } from "@/features/log/requestVersion";
 import type {
   DurationSet,
   Exercise,
@@ -39,6 +40,7 @@ export function useLogSessionData({
   isCurrentDate,
   setMsg,
 }: UseLogSessionDataParams) {
+  const requestTrackerRef = useRef(createRequestVersionTracker());
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [lastSessionBySplit, setLastSessionBySplit] = useState<Partial<Record<Split, LastSessionInfo>>>({});
   const [recentSessions, setRecentSessions] = useState<RecentWorkoutSession[]>([]);
@@ -52,8 +54,12 @@ export function useLogSessionData({
     Record<string, LastDurationSetSnapshot>
   >({});
 
-  const loadLastSessions = useCallback(async () => {
+  const loadLastSessions = useCallback(async (requestVersion?: number) => {
+    const isStale = () =>
+      requestVersion != null && requestTrackerRef.current.isStale(requestVersion);
+
     const authState = await getCurrentSessionUser();
+    if (isStale()) return;
     if (authState.status !== "ok") {
       setLastSessionBySplit({});
       return;
@@ -66,6 +72,7 @@ export function useLogSessionData({
       .select("split,session_date")
       .eq("user_id", userId)
       .order("session_date", { ascending: false });
+    if (isStale()) return;
 
     if (error || !data) return;
 
@@ -82,8 +89,12 @@ export function useLogSessionData({
     setLastSessionBySplit(next);
   }, []);
 
-  const loadRecentSessions = useCallback(async () => {
+  const loadRecentSessions = useCallback(async (requestVersion?: number) => {
+    const isStale = () =>
+      requestVersion != null && requestTrackerRef.current.isStale(requestVersion);
+
     const authState = await getCurrentSessionUser();
+    if (isStale()) return;
     if (authState.status !== "ok") {
       setRecentSessions([]);
       return;
@@ -97,6 +108,7 @@ export function useLogSessionData({
       .eq("split", split)
       .order("session_date", { ascending: false })
       .limit(5);
+    if (isStale()) return;
 
     if (error) {
       setRecentSessions([]);
@@ -107,13 +119,18 @@ export function useLogSessionData({
   }, [split]);
 
   useEffect(() => {
+    const requestVersion = requestTrackerRef.current.next();
+    const isStale = () => requestTrackerRef.current.isStale(requestVersion);
+
     (async () => {
+      if (isStale()) return;
       setMsg(null);
 
-      void loadLastSessions();
-      void loadRecentSessions();
+      void loadLastSessions(requestVersion);
+      void loadRecentSessions(requestVersion);
 
       const authState = await getCurrentSessionUser();
+      if (isStale()) return;
       if (authState.status === "error") {
         setMsg(`Error checking session: ${authState.message}`);
         setExercises([]);
@@ -128,6 +145,7 @@ export function useLogSessionData({
 
       const userId = authState.userId;
       const seedError = await ensureDefaultExercisesForUser(userId);
+      if (isStale()) return;
       if (seedError) {
         setMsg(`Error preparing default exercises: ${seedError}`);
         setExercises([]);
@@ -142,6 +160,7 @@ export function useLogSessionData({
         .eq("is_active", true)
         .order("sort_order")
         .order("name");
+      if (isStale()) return;
 
       if (error) {
         setMsg(`Error loading exercises: ${error.message}`);
@@ -171,6 +190,7 @@ export function useLogSessionData({
           .lt("session_date", date)
           .order("session_date", { ascending: false })
           .limit(20);
+        if (isStale()) return;
 
         if (priorSessionsError || !priorSessions || priorSessions.length === 0) {
           setLastWeightedSetByKey({});
@@ -187,6 +207,7 @@ export function useLogSessionData({
             .eq("user_id", userId)
             .in("session_id", priorSessionIds)
             .in("exercise_id", trackedExerciseIds);
+          if (isStale()) return;
 
           if (priorSetRowsError || !priorSetRows) {
             setLastWeightedSetByKey({});
@@ -265,6 +286,7 @@ export function useLogSessionData({
         .eq("session_date", date)
         .eq("split", split)
         .maybeSingle();
+      if (isStale()) return;
 
       if (existingSession?.id) {
         const { data: existingSets } = await supabase
@@ -272,6 +294,7 @@ export function useLogSessionData({
           .select("*")
           .eq("session_id", existingSession.id)
           .order("set_number", { ascending: true });
+        if (isStale()) return;
 
         const modifiedMap: Record<string, string> = {};
 
@@ -316,6 +339,10 @@ export function useLogSessionData({
       setWeightedForm(weightedDefaults);
       setDurationForm(durationDefaults);
     })();
+
+    return () => {
+      requestTrackerRef.current.invalidate();
+    };
   }, [date, isCurrentDate, loadLastSessions, loadRecentSessions, setMsg, split]);
 
   return {

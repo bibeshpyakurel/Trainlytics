@@ -4,12 +4,18 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { toKg, type Unit } from "@/lib/convertWeight";
 import { TABLES } from "@/lib/dbNames";
+import { getCurrentSessionUser } from "@/lib/authSession";
 import {
   formatLastSessionDate,
   formatSummaryWeight,
   makeSetKey,
 } from "@/features/log/formatters";
 import { sortSessionSummaryItems } from "@/features/log/summary";
+import {
+  buildSessionSummaryItems,
+  checkSessionDateCollision,
+  persistWorkoutSetsAtomic,
+} from "@/features/log/workflows";
 import { useLogSessionData } from "@/features/log/useLogSessionData";
 import WeightedSetRow from "@/features/log/components/WeightedSetRow";
 import DurationSetRow from "@/features/log/components/DurationSetRow";
@@ -22,7 +28,6 @@ import GradientButton from "@/shared/ui/GradientButton";
 import type {
   DurationSet,
   Exercise,
-  ExistingWorkoutSet,
   MetricType,
   PendingSessionDelete,
   PendingSessionEdit,
@@ -46,7 +51,8 @@ export default function LogWorkoutPage() {
   const [split, setSplit] = useState<Split>("push");
   const [date, setDate] = useState<string>(() => today);
 
-  const [loading, setLoading] = useState(false);
+  const [busyAction, setBusyAction] = useState<"saveWorkout" | "editSessionDate" | "deleteSession" | null>(null);
+  const [savingSetKey, setSavingSetKey] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pendingSetDelete, setPendingSetDelete] = useState<PendingSetDelete | null>(null);
   const [pendingSessionDelete, setPendingSessionDelete] = useState<PendingSessionDelete | null>(null);
@@ -65,6 +71,7 @@ export default function LogWorkoutPage() {
     setCount: number;
   } | null>(null);
   const isCurrentDate = date === today;
+  const isGlobalBusy = busyAction !== null;
   const {
     exercises,
     lastSessionBySplit,
@@ -199,7 +206,39 @@ export default function LogWorkoutPage() {
     return true;
   }
 
-  async function ensureSession(userId: string) {
+  async function requireUserId() {
+    const authState = await getCurrentSessionUser();
+    if (authState.status === "ok") {
+      return authState.userId;
+    }
+
+    if (authState.status === "error") {
+      setMsg(`Failed checking session: ${authState.message}`);
+    } else {
+      setMsg(LOG_MESSAGES.notLoggedIn);
+    }
+
+    return null;
+  }
+
+  async function findSessionIdForSelection(userId: string): Promise<string | null | undefined> {
+    const { data: sessionRow, error: lookupErr } = await supabase
+      .from(TABLES.workoutSessions)
+      .select("id")
+      .eq("user_id", userId)
+      .eq("session_date", date)
+      .eq("split", split)
+      .maybeSingle();
+
+    if (lookupErr) {
+      setMsg(`Failed finding session: ${lookupErr.message}`);
+      return undefined;
+    }
+
+    return (sessionRow?.id as string | undefined) ?? null;
+  }
+
+  async function getOrCreateSessionIdForSelection(userId: string) {
     const { data: sessionRow, error: upsertErr } = await supabase
       .from(TABLES.workoutSessions)
       .upsert({ user_id: userId, session_date: date, split }, { onConflict: "user_id,session_date,split" })
@@ -216,130 +255,204 @@ export default function LogWorkoutPage() {
 
   async function save() {
     if (!validateSessionDate()) return;
+    if (isGlobalBusy || savingSetKey) return;
 
-    setLoading(true);
+    setBusyAction("saveWorkout");
     setMsg(null);
+    try {
+      const userId = await requireUserId();
+      if (!userId) {
+        return;
+      }
 
-    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-    
-    if (sessionErr || !sessionData.session) {
-      setLoading(false);
-      setMsg(LOG_MESSAGES.notLoggedIn);
-      return;
-    }
-    const userId = sessionData.session.user.id;
+      const rowsToPersist: Array<
+        Pick<
+          WorkoutSetInsert,
+          "exercise_id" | "set_number" | "reps" | "weight_input" | "unit_input" | "weight_kg" | "duration_seconds"
+        >
+      > = [];
 
-    // 1) Upsert/find workout session for date+split
-    const { data: sessionRow, error: upsertErr } = await supabase
-      .from(TABLES.workoutSessions)
-      .upsert(
-          { user_id: userId, session_date: date, split },
-          { onConflict: "user_id,session_date,split" }
-        )
+      for (const ex of exercises) {
+        if (ex.metric_type === "WEIGHTED_REPS") {
+          const sets = weightedForm[ex.id];
+          if (!sets) continue;
 
-      .select("id")
-      .single();
+          for (let i = 0; i < 2; i++) {
+            const hasReps = sets[i].reps.trim().length > 0;
+            const hasWeight = sets[i].weight.trim().length > 0;
 
-    if (upsertErr) {
-      setLoading(false);
-      setMsg(`Failed to create session: ${upsertErr.message}`);
-      return;
-    }
+            if (hasReps !== hasWeight) {
+              setMsg(`Enter both reps and weight for ${ex.name} set ${i + 1}`);
+              return;
+            }
 
-    const sessionId = sessionRow.id as string;
+            const repsNum = Number(sets[i].reps);
+            const wNum = Number(sets[i].weight);
+            const unit = sets[i].unit;
 
-    const { data: existingSetRows, error: existingSetErr } = await supabase
-      .from(TABLES.workoutSets)
-      .select("id,exercise_id,set_number")
-      .eq("session_id", sessionId);
+            // Skip empty set rows
+            if (!hasReps && !hasWeight) continue;
 
-    if (existingSetErr) {
-      setLoading(false);
-      setMsg(`Failed loading existing sets: ${existingSetErr.message}`);
-      return;
-    }
+            if (!Number.isFinite(repsNum) || repsNum < 0) {
+              setMsg(`Invalid reps for ${ex.name} set ${i + 1}`);
+              return;
+            }
+            if (!Number.isFinite(wNum) || wNum < 0) {
+              setMsg(`Invalid weight for ${ex.name} set ${i + 1}`);
+              return;
+            }
 
-    const existingByKey = new Map<string, string>();
-    for (const row of (existingSetRows ?? []) as ExistingWorkoutSet[]) {
-      existingByKey.set(`${row.exercise_id}:${row.set_number}`, row.id);
-    }
-
-    const inserts: WorkoutSetInsert[] = [];
-    const updates: Array<WorkoutSetInsert & { id: string }> = [];
-    const deleteIds: string[] = [];
-
-    for (const ex of exercises) {
-      if (ex.metric_type === "WEIGHTED_REPS") {
-        const sets = weightedForm[ex.id];
-        if (!sets) continue;
-
-        for (let i = 0; i < 2; i++) {
-          const hasReps = sets[i].reps.trim().length > 0;
-          const hasWeight = sets[i].weight.trim().length > 0;
-
-          if (hasReps !== hasWeight) {
-            setLoading(false);
-            setMsg(`Enter both reps and weight for ${ex.name} set ${i + 1}`);
-            return;
+            const setNumber = i + 1;
+            const rowPayload = {
+              exercise_id: ex.id,
+              set_number: setNumber,
+              reps: repsNum,
+              weight_input: wNum,
+              unit_input: unit,
+              weight_kg: toKg(wNum, unit),
+              duration_seconds: null,
+            };
+            rowsToPersist.push(rowPayload);
           }
+        } else {
+          // DURATION (Plank)
+          const sets = durationForm[ex.id];
+          if (!sets) continue;
 
-          const repsNum = Number(sets[i].reps);
-          const wNum = Number(sets[i].weight);
-          const unit = sets[i].unit;
+          for (let i = 0; i < 2; i++) {
+            if (!sets[i].seconds) continue;
+            const secNum = Number(sets[i].seconds);
+            if (!Number.isFinite(secNum) || secNum < 0) {
+              setMsg(`Invalid seconds for ${ex.name} set ${i + 1}`);
+              return;
+            }
 
-          // Skip empty set rows
-          if (!hasReps && !hasWeight) continue;
+            const setNumber = i + 1;
+            const rowPayload = {
+              exercise_id: ex.id,
+              set_number: setNumber,
+              reps: null,
+              weight_input: null,
+              unit_input: null,
+              weight_kg: null,
+              duration_seconds: secNum,
+            };
+            rowsToPersist.push(rowPayload);
+          }
+        }
+      }
+
+      const recordedSetCount = rowsToPersist.length;
+      if (recordedSetCount === 0) {
+        setMsg(LOG_MESSAGES.emptyWorkoutSave);
+        return;
+      }
+
+      const saveResult = await persistWorkoutSetsAtomic(
+        supabase as unknown as {
+          rpc: (
+            fn: string,
+            args: Record<string, unknown>
+          ) => Promise<{ data: { set_count?: number } | null; error: { message: string } | null }>;
+        },
+        {
+          sessionDate: date,
+          split,
+          rows: rowsToPersist,
+        }
+      );
+
+      if (!saveResult.ok) {
+        setMsg(`Failed saving workout: ${saveResult.message}`);
+        return;
+      }
+
+      setSavedWorkoutOverlay({
+        split,
+        sessionDate: date,
+        setCount: saveResult.setCount ?? recordedSetCount,
+      });
+      window.setTimeout(() => {
+        setSavedWorkoutOverlay(null);
+      }, 1700);
+      setMsg(LOG_MESSAGES.savedWorkout);
+      void loadLastSessions();
+      void loadRecentSessions();
+    } finally {
+      setBusyAction((current) => (current === "saveWorkout" ? null : current));
+    }
+  }
+
+  async function saveSingleSet(ex: Exercise, setIdx: 0 | 1) {
+    if (!validateSessionDate()) return;
+    if (isGlobalBusy || savingSetKey) return;
+    const setNumber = setIdx + 1;
+    const key = makeSetKey(ex.id, setNumber);
+
+    setSavingSetKey(key);
+    setMsg(null);
+    try {
+      const userId = await requireUserId();
+      if (!userId) {
+        return;
+      }
+
+      const sessionId = await getOrCreateSessionIdForSelection(userId);
+      if (!sessionId) {
+        return;
+      }
+
+      let payload: WorkoutSetInsert | null = null;
+
+      if (ex.metric_type === "WEIGHTED_REPS") {
+        const row = weightedForm[ex.id]?.[setIdx] ?? { reps: "", weight: "", unit: "lb" as Unit };
+        const hasReps = row.reps.trim().length > 0;
+        const hasWeight = row.weight.trim().length > 0;
+
+        if (hasReps !== hasWeight) {
+          setMsg(`Enter both reps and weight for ${ex.name} set ${setNumber}`);
+          return;
+        }
+
+        if (!hasReps && !hasWeight) {
+          payload = null;
+        } else {
+          const repsNum = Number(row.reps);
+          const weightNum = Number(row.weight);
 
           if (!Number.isFinite(repsNum) || repsNum < 0) {
-            setLoading(false);
-            setMsg(`Invalid reps for ${ex.name} set ${i + 1}`);
+            setMsg(`Invalid reps for ${ex.name} set ${setNumber}`);
             return;
           }
-          if (!Number.isFinite(wNum) || wNum < 0) {
-            setLoading(false);
-            setMsg(`Invalid weight for ${ex.name} set ${i + 1}`);
+          if (!Number.isFinite(weightNum) || weightNum < 0) {
+            setMsg(`Invalid weight for ${ex.name} set ${setNumber}`);
             return;
           }
 
-          const setNumber = i + 1;
-          const key = `${ex.id}:${setNumber}`;
-          const existingId = existingByKey.get(key);
-          const rowPayload: WorkoutSetInsert = {
+          payload = {
             user_id: userId,
             session_id: sessionId,
             exercise_id: ex.id,
             set_number: setNumber,
             reps: repsNum,
-            weight_input: wNum,
-            unit_input: unit,
-            weight_kg: toKg(wNum, unit),
+            weight_input: weightNum,
+            unit_input: row.unit,
+            weight_kg: toKg(weightNum, row.unit),
             duration_seconds: null,
           };
-
-          if (existingId) {
-            updates.push({ ...rowPayload, id: existingId });
-          } else {
-            inserts.push(rowPayload);
-          }
         }
       } else {
-        // DURATION (Plank)
-        const sets = durationForm[ex.id];
-        if (!sets) continue;
-
-        for (let i = 0; i < 2; i++) {
-          if (!sets[i].seconds) continue;
-          const secNum = Number(sets[i].seconds);
+        const row = durationForm[ex.id]?.[setIdx] ?? { seconds: "" };
+        if (!row.seconds) {
+          payload = null;
+        } else {
+          const secNum = Number(row.seconds);
           if (!Number.isFinite(secNum) || secNum < 0) {
-            setLoading(false);
-            setMsg(`Invalid seconds for ${ex.name} set ${i + 1}`);
+            setMsg(`Invalid seconds for ${ex.name} set ${setNumber}`);
             return;
           }
 
-          const setNumber = i + 1;
-          const key = `${ex.id}:${setNumber}`;
-          const existingId = existingByKey.get(key);
-          const rowPayload: WorkoutSetInsert = {
+          payload = {
             user_id: userId,
             session_id: sessionId,
             exercise_id: ex.id,
@@ -350,226 +463,45 @@ export default function LogWorkoutPage() {
             weight_kg: null,
             duration_seconds: secNum,
           };
-
-          if (existingId) {
-            updates.push({ ...rowPayload, id: existingId });
-          } else {
-            inserts.push(rowPayload);
-          }
         }
       }
 
-      for (let i = 0; i < 2; i++) {
-        const setNumber = i + 1;
-        const key = `${ex.id}:${setNumber}`;
-        const existingId = existingByKey.get(key);
-        if (!existingId) continue;
-
-        const stillPresent = updates.some((row) => row.id === existingId);
-        if (!stillPresent) {
-          deleteIds.push(existingId);
-        }
-      }
-    }
-
-    const recordedSetCount = inserts.length + updates.length;
-    if (recordedSetCount === 0) {
-      setLoading(false);
-      setMsg(LOG_MESSAGES.emptyWorkoutSave);
-      return;
-    }
-
-    if (inserts.length > 0) {
-      const { error: insertErr } = await supabase.from(TABLES.workoutSets).insert(inserts);
-      if (insertErr) {
-        setLoading(false);
-        setMsg(`Failed inserting sets: ${insertErr.message}`);
-        return;
-      }
-    }
-
-    if (updates.length > 0) {
-      const { error: updateErr } = await supabase.from(TABLES.workoutSets).upsert(updates, { onConflict: "id" });
-      if (updateErr) {
-        setLoading(false);
-        setMsg(`Failed updating sets: ${updateErr.message}`);
-        return;
-      }
-    }
-
-    if (deleteIds.length > 0) {
-      const { error: deleteErr } = await supabase.from(TABLES.workoutSets).delete().in("id", deleteIds);
-      if (deleteErr) {
-        setLoading(false);
-        setMsg(`Failed deleting cleared sets: ${deleteErr.message}`);
-        return;
-      }
-    }
-
-    setLoading(false);
-    setSavedWorkoutOverlay({
-      split,
-      sessionDate: date,
-      setCount: inserts.length + updates.length,
-    });
-    window.setTimeout(() => {
-      setSavedWorkoutOverlay(null);
-    }, 1700);
-    setMsg(LOG_MESSAGES.savedWorkout);
-    void loadLastSessions();
-    void loadRecentSessions();
-  }
-
-  async function saveSingleSet(ex: Exercise, setIdx: 0 | 1) {
-    if (!validateSessionDate()) return;
-
-    setLoading(true);
-    setMsg(null);
-
-    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-    if (sessionErr || !sessionData.session) {
-      setLoading(false);
-      setMsg(LOG_MESSAGES.notLoggedIn);
-      return;
-    }
-
-    const userId = sessionData.session.user.id;
-    const sessionId = await ensureSession(userId);
-    if (!sessionId) {
-      setLoading(false);
-      return;
-    }
-
-    const setNumber = setIdx + 1;
-    const key = makeSetKey(ex.id, setNumber);
-
-    const { data: existingSet, error: existingErr } = await supabase
-      .from(TABLES.workoutSets)
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("exercise_id", ex.id)
-      .eq("set_number", setNumber)
-      .maybeSingle();
-
-    if (existingErr) {
-      setLoading(false);
-      setMsg(`Failed loading existing set: ${existingErr.message}`);
-      return;
-    }
-
-    let payload: WorkoutSetInsert | null = null;
-
-    if (ex.metric_type === "WEIGHTED_REPS") {
-      const row = weightedForm[ex.id]?.[setIdx] ?? { reps: "", weight: "", unit: "lb" as Unit };
-      const hasReps = row.reps.trim().length > 0;
-      const hasWeight = row.weight.trim().length > 0;
-
-      if (hasReps !== hasWeight) {
-        setLoading(false);
-        setMsg(`Enter both reps and weight for ${ex.name} set ${setNumber}`);
-        return;
-      }
-
-      if (!hasReps && !hasWeight) {
-        payload = null;
-      } else {
-        const repsNum = Number(row.reps);
-        const weightNum = Number(row.weight);
-
-        if (!Number.isFinite(repsNum) || repsNum < 0) {
-          setLoading(false);
-          setMsg(`Invalid reps for ${ex.name} set ${setNumber}`);
-          return;
-        }
-        if (!Number.isFinite(weightNum) || weightNum < 0) {
-          setLoading(false);
-          setMsg(`Invalid weight for ${ex.name} set ${setNumber}`);
-          return;
-        }
-
-        payload = {
-          user_id: userId,
-          session_id: sessionId,
-          exercise_id: ex.id,
-          set_number: setNumber,
-          reps: repsNum,
-          weight_input: weightNum,
-          unit_input: row.unit,
-          weight_kg: toKg(weightNum, row.unit),
-          duration_seconds: null,
-        };
-      }
-    } else {
-      const row = durationForm[ex.id]?.[setIdx] ?? { seconds: "" };
-      if (!row.seconds) {
-        payload = null;
-      } else {
-        const secNum = Number(row.seconds);
-        if (!Number.isFinite(secNum) || secNum < 0) {
-          setLoading(false);
-          setMsg(`Invalid seconds for ${ex.name} set ${setNumber}`);
-          return;
-        }
-
-        payload = {
-          user_id: userId,
-          session_id: sessionId,
-          exercise_id: ex.id,
-          set_number: setNumber,
-          reps: null,
-          weight_input: null,
-          unit_input: null,
-          weight_kg: null,
-          duration_seconds: secNum,
-        };
-      }
-    }
-
-    if (!payload) {
-      if (existingSet?.id) {
-        const { error: delErr } = await supabase.from(TABLES.workoutSets).delete().eq("id", existingSet.id);
+      if (!payload) {
+        const { error: delErr } = await supabase
+          .from(TABLES.workoutSets)
+          .delete()
+          .eq("session_id", sessionId)
+          .eq("exercise_id", ex.id)
+          .eq("set_number", setNumber);
         if (delErr) {
-          setLoading(false);
           setMsg(`Failed deleting set: ${delErr.message}`);
           return;
         }
+
+        setLastModifiedBySetKey((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setMsg(`${ex.name} set ${setNumber} cleared ✅`);
+        return;
       }
 
-      setLastModifiedBySetKey((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-      setLoading(false);
-      setMsg(`${ex.name} set ${setNumber} cleared ✅`);
-      return;
-    }
-
-    if (existingSet?.id) {
-      const { error: updateErr } = await supabase
+      const { error: upsertSetErr } = await supabase
         .from(TABLES.workoutSets)
-        .update(payload)
-        .eq("id", existingSet.id);
+        .upsert(payload, { onConflict: "session_id,exercise_id,set_number" });
+      if (upsertSetErr) {
+        setMsg(`Failed saving set: ${upsertSetErr.message}`);
+        return;
+      }
 
-      if (updateErr) {
-        setLoading(false);
-        setMsg(`Failed saving set: ${updateErr.message}`);
-        return;
-      }
-    } else {
-      const { error: insertErr } = await supabase.from(TABLES.workoutSets).insert(payload);
-      if (insertErr) {
-        setLoading(false);
-        setMsg(`Failed saving set: ${insertErr.message}`);
-        return;
-      }
+      setLastModifiedBySetKey((prev) => ({ ...prev, [key]: new Date().toISOString() }));
+      setMsg(`${ex.name} set ${setNumber} saved ✅`);
+      void loadLastSessions();
+      void loadRecentSessions();
+    } finally {
+      setSavingSetKey((current) => (current === key ? null : current));
     }
-
-    setLastModifiedBySetKey((prev) => ({ ...prev, [key]: new Date().toISOString() }));
-    setLoading(false);
-    setMsg(`${ex.name} set ${setNumber} saved ✅`);
-    void loadLastSessions();
-    void loadRecentSessions();
   }
 
   function requestDeleteSingleSet(ex: Exercise, setIdx: 0 | 1) {
@@ -588,67 +520,57 @@ export default function LogWorkoutPage() {
 
   async function confirmDeleteSingleSet() {
     if (!pendingSetDelete) return;
+    if (isGlobalBusy || savingSetKey) return;
     const target = pendingSetDelete;
     setPendingSetDelete(null);
 
     const setNumber = target.setIdx + 1;
+    const key = makeSetKey(target.exerciseId, setNumber);
 
-    setLoading(true);
+    setSavingSetKey(key);
     setMsg(null);
-
-    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-    if (sessionErr || !sessionData.session) {
-      setLoading(false);
-      setMsg(LOG_MESSAGES.notLoggedIn);
-      return;
-    }
-
-    const userId = sessionData.session.user.id;
-    const { data: sessionRow, error: sessionLookupErr } = await supabase
-      .from(TABLES.workoutSessions)
-      .select("id")
-      .eq("user_id", userId)
-      .eq("session_date", date)
-      .eq("split", split)
-      .maybeSingle();
-
-    if (sessionLookupErr) {
-      setLoading(false);
-      setMsg(`Failed finding session: ${sessionLookupErr.message}`);
-      return;
-    }
-
-    if (sessionRow?.id) {
-      const { error: deleteErr } = await supabase
-        .from(TABLES.workoutSets)
-        .delete()
-        .eq("session_id", sessionRow.id)
-        .eq("exercise_id", target.exerciseId)
-        .eq("set_number", setNumber);
-
-      if (deleteErr) {
-        setLoading(false);
-        setMsg(`Failed deleting set: ${deleteErr.message}`);
+    try {
+      const userId = await requireUserId();
+      if (!userId) {
         return;
       }
+
+      const sessionId = await findSessionIdForSelection(userId);
+      if (sessionId === undefined) {
+        return;
+      }
+
+      if (sessionId) {
+        const { error: deleteErr } = await supabase
+          .from(TABLES.workoutSets)
+          .delete()
+          .eq("session_id", sessionId)
+          .eq("exercise_id", target.exerciseId)
+          .eq("set_number", setNumber);
+
+        if (deleteErr) {
+          setMsg(`Failed deleting set: ${deleteErr.message}`);
+          return;
+        }
+      }
+
+      if (target.metricType === "WEIGHTED_REPS") {
+        updateWeighted(target.exerciseId, target.setIdx, { reps: "", weight: "" });
+      } else {
+        updateDuration(target.exerciseId, target.setIdx, "");
+      }
+
+      setLastModifiedBySetKey((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+
+      setMsg(`${target.exerciseName} set ${setNumber} deleted 🗑️`);
+      void loadRecentSessions();
+    } finally {
+      setSavingSetKey((current) => (current === key ? null : current));
     }
-
-    if (target.metricType === "WEIGHTED_REPS") {
-      updateWeighted(target.exerciseId, target.setIdx, { reps: "", weight: "" });
-    } else {
-      updateDuration(target.exerciseId, target.setIdx, "");
-    }
-
-    const key = makeSetKey(target.exerciseId, setNumber);
-    setLastModifiedBySetKey((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-
-    setLoading(false);
-    setMsg(`${target.exerciseName} set ${setNumber} deleted 🗑️`);
-    void loadRecentSessions();
   }
 
   function requestDeleteSession(session: RecentWorkoutSession) {
@@ -686,46 +608,80 @@ export default function LogWorkoutPage() {
     }
 
     const target = pendingSessionEdit;
-    setLoading(true);
+    if (isGlobalBusy || savingSetKey) return;
+    setBusyAction("editSessionDate");
     setMsg(null);
+    try {
+      const userId = await requireUserId();
+      if (!userId) {
+        return;
+      }
 
-    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-    if (sessionErr || !sessionData.session) {
-      setLoading(false);
-      setMsg(LOG_MESSAGES.notLoggedIn);
-      return;
+      const collisionResult = await checkSessionDateCollision(
+        supabase as unknown as {
+          from: (table: string) => {
+            select: (columns: string) => {
+              eq: (column: string, value: string) => {
+                eq: (column: string, value: string) => {
+                  eq: (column: string, value: string) => {
+                    neq: (column: string, value: string) => {
+                      limit: (
+                        count: number
+                      ) => Promise<{ data: Array<{ id: string }> | null; error: { message: string } | null }>;
+                    };
+                  };
+                };
+              };
+            };
+          };
+        },
+        {
+          userId,
+          split: target.split,
+          newDate: target.newDate,
+          excludeSessionId: target.id,
+        }
+      );
+
+      if (!collisionResult.ok) {
+        setMsg(`Failed checking date conflict: ${collisionResult.message}`);
+        return;
+      }
+
+      if (collisionResult.exists) {
+        setMsg(`A ${target.split.toUpperCase()} session already exists on ${target.newDate}.`);
+        return;
+      }
+
+      const { error: updateErr } = await supabase
+        .from(TABLES.workoutSessions)
+        .update({ session_date: target.newDate })
+        .eq("id", target.id)
+        .eq("user_id", userId);
+
+      if (updateErr) {
+        setMsg(`Failed updating session date: ${updateErr.message}`);
+        return;
+      }
+
+      if (target.sessionDate === date && target.split === split) {
+        setDate(target.newDate);
+      }
+
+      if (pendingSessionSummary?.id === target.id) {
+        setPendingSessionSummary((prev) => {
+          if (!prev) return prev;
+          return { ...prev, sessionDate: target.newDate };
+        });
+      }
+
+      setPendingSessionEdit(null);
+      setMsg(`Updated session date to ${target.newDate} ✅`);
+      void loadLastSessions();
+      void loadRecentSessions();
+    } finally {
+      setBusyAction((current) => (current === "editSessionDate" ? null : current));
     }
-
-    const userId = sessionData.session.user.id;
-
-    const { error: updateErr } = await supabase
-      .from(TABLES.workoutSessions)
-      .update({ session_date: target.newDate })
-      .eq("id", target.id)
-      .eq("user_id", userId);
-
-    if (updateErr) {
-      setLoading(false);
-      setMsg(`Failed updating session date: ${updateErr.message}`);
-      return;
-    }
-
-    if (target.sessionDate === date && target.split === split) {
-      setDate(target.newDate);
-    }
-
-    if (pendingSessionSummary?.id === target.id) {
-      setPendingSessionSummary((prev) => {
-        if (!prev) return prev;
-        return { ...prev, sessionDate: target.newDate };
-      });
-    }
-
-    setPendingSessionEdit(null);
-    setLoading(false);
-    setMsg(`Updated session date to ${target.newDate} ✅`);
-    void loadLastSessions();
-    void loadRecentSessions();
   }
 
   async function requestSessionSummary(session: RecentWorkoutSession) {
@@ -739,14 +695,11 @@ export default function LogWorkoutPage() {
     setSessionSummaryLoading(true);
     setMsg(null);
 
-    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-    if (sessionErr || !sessionData.session) {
+    const userId = await requireUserId();
+    if (!userId) {
       setSessionSummaryLoading(false);
-      setMsg(LOG_MESSAGES.notLoggedIn);
       return;
     }
-
-    const userId = sessionData.session.user.id;
 
     const { data: setRows, error: setErr } = await supabase
       .from(TABLES.workoutSets)
@@ -779,62 +732,18 @@ export default function LogWorkoutPage() {
       return;
     }
 
-    const exerciseMeta = new Map<string, { name: string; metricType: MetricType }>();
-    for (const row of (exerciseRows ?? []) as Array<{ id: string; name: string; metric_type: MetricType }>) {
-      exerciseMeta.set(row.id, { name: row.name, metricType: row.metric_type });
-    }
-
-    const summaryMap = new Map<string, SessionSummaryItem>();
-
-    for (const row of setRows as Array<{
-      exercise_id: string;
-      set_number: number;
-      reps: number | null;
-      weight_input: number | null;
-      unit_input: Unit | null;
-      duration_seconds: number | null;
-    }>) {
-      const meta = exerciseMeta.get(row.exercise_id);
-      const metricType: MetricType = meta?.metricType ?? (row.duration_seconds != null ? "DURATION" : "WEIGHTED_REPS");
-
-      if (!summaryMap.has(row.exercise_id)) {
-        summaryMap.set(row.exercise_id, {
-          exerciseId: row.exercise_id,
-          exerciseName: meta?.name ?? "Unknown exercise",
-          metricType,
-          sets: 0,
-          totalReps: 0,
-          maxWeight: null,
-          unit: null,
-          totalDurationSeconds: 0,
-          setDetails: [],
-        });
-      }
-
-      const item = summaryMap.get(row.exercise_id)!;
-      item.sets += 1;
-      item.setDetails.push({
-        setNumber: row.set_number,
-        reps: row.reps,
-        weightInput: row.weight_input,
-        unitInput: row.unit_input,
-        durationSeconds: row.duration_seconds,
-      });
-
-      if (metricType === "WEIGHTED_REPS") {
-        item.totalReps += row.reps ?? 0;
-        if (row.weight_input != null) {
-          item.maxWeight = item.maxWeight == null ? row.weight_input : Math.max(item.maxWeight, row.weight_input);
-        }
-        if (!item.unit && row.unit_input) {
-          item.unit = row.unit_input;
-        }
-      } else {
-        item.totalDurationSeconds += row.duration_seconds ?? 0;
-      }
-    }
-
-    const sortedItems = sortSessionSummaryItems(Array.from(summaryMap.values()), session.split);
+    const sortedItems = buildSessionSummaryItems(
+      setRows as Array<{
+        exercise_id: string;
+        set_number: number;
+        reps: number | null;
+        weight_input: number | null;
+        unit_input: Unit | null;
+        duration_seconds: number | null;
+      }>,
+      (exerciseRows ?? []) as Array<{ id: string; name: string; metric_type: MetricType }>,
+      session.split
+    );
 
     setSessionSummaryItems(sortedItems);
     setSessionSummaryLoading(false);
@@ -851,63 +760,60 @@ export default function LogWorkoutPage() {
 
     const target = pendingSessionDelete;
     setPendingSessionDelete(null);
-    setLoading(true);
+    if (isGlobalBusy || savingSetKey) return;
+    setBusyAction("deleteSession");
     setMsg(null);
-
-    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-    if (sessionErr || !sessionData.session) {
-      setLoading(false);
-      setMsg(LOG_MESSAGES.notLoggedIn);
-      return;
-    }
-
-    const userId = sessionData.session.user.id;
-
-    const { error: deleteSetsErr } = await supabase
-      .from(TABLES.workoutSets)
-      .delete()
-      .eq("session_id", target.id)
-      .eq("user_id", userId);
-
-    if (deleteSetsErr) {
-      setLoading(false);
-      setMsg(`Failed deleting session sets: ${deleteSetsErr.message}`);
-      return;
-    }
-
-    const { error: deleteSessionErr } = await supabase
-      .from(TABLES.workoutSessions)
-      .delete()
-      .eq("id", target.id)
-      .eq("user_id", userId);
-
-    if (deleteSessionErr) {
-      setLoading(false);
-      setMsg(`Failed deleting session: ${deleteSessionErr.message}`);
-      return;
-    }
-
-    if (target.sessionDate === date && target.split === split) {
-      const weightedDefaults: Record<string, [WeightedSet, WeightedSet]> = {};
-      const durationDefaults: Record<string, [DurationSet, DurationSet]> = {};
-
-      for (const ex of exercises) {
-        if (ex.metric_type === "WEIGHTED_REPS") {
-          weightedDefaults[ex.id] = createDefaultWeightedPair();
-        } else {
-          durationDefaults[ex.id] = createDefaultDurationPair();
-        }
+    try {
+      const userId = await requireUserId();
+      if (!userId) {
+        return;
       }
 
-      setWeightedForm(weightedDefaults);
-      setDurationForm(durationDefaults);
-      setLastModifiedBySetKey({});
-    }
+      const { error: deleteSetsErr } = await supabase
+        .from(TABLES.workoutSets)
+        .delete()
+        .eq("session_id", target.id)
+        .eq("user_id", userId);
 
-    setLoading(false);
-    setMsg(`Deleted ${target.split.toUpperCase()} session from ${target.sessionDate} 🗑️`);
-    void loadLastSessions();
-    void loadRecentSessions();
+      if (deleteSetsErr) {
+        setMsg(`Failed deleting session sets: ${deleteSetsErr.message}`);
+        return;
+      }
+
+      const { error: deleteSessionErr } = await supabase
+        .from(TABLES.workoutSessions)
+        .delete()
+        .eq("id", target.id)
+        .eq("user_id", userId);
+
+      if (deleteSessionErr) {
+        setMsg(`Failed deleting session: ${deleteSessionErr.message}`);
+        return;
+      }
+
+      if (target.sessionDate === date && target.split === split) {
+        const weightedDefaults: Record<string, [WeightedSet, WeightedSet]> = {};
+        const durationDefaults: Record<string, [DurationSet, DurationSet]> = {};
+
+        for (const ex of exercises) {
+          if (ex.metric_type === "WEIGHTED_REPS") {
+            weightedDefaults[ex.id] = createDefaultWeightedPair();
+          } else {
+            durationDefaults[ex.id] = createDefaultDurationPair();
+          }
+        }
+
+        setWeightedForm(weightedDefaults);
+        setDurationForm(durationDefaults);
+        setLastModifiedBySetKey({});
+      }
+
+      setMsg(`Deleted ${target.split.toUpperCase()} session from ${target.sessionDate} 🗑️`);
+      void loadLastSessions();
+      void loadRecentSessions();
+    } finally {
+      setBusyAction((current) => (current === "deleteSession" ? null : current));
+    }
   }
 
   function cancelDeleteSession() {
@@ -1002,7 +908,7 @@ export default function LogWorkoutPage() {
                               exerciseId={ex.id}
                               row={row}
                               isCurrentDate={isCurrentDate}
-                              loading={loading}
+                              loading={isGlobalBusy || savingSetKey === makeSetKey(ex.id, setIdx + 1)}
                               lastWeightedSet={lastWeightedSet}
                               lastModified={lastModifiedBySetKey[makeSetKey(ex.id, setIdx + 1)]}
                               onUpdateReps={(value) => updateWeighted(ex.id, setIdx, { reps: value })}
@@ -1026,7 +932,7 @@ export default function LogWorkoutPage() {
                               setIndex={setIdx}
                               row={row}
                               isCurrentDate={isCurrentDate}
-                              loading={loading}
+                              loading={isGlobalBusy || savingSetKey === makeSetKey(ex.id, setIdx + 1)}
                               lastDurationSet={lastDurationSet}
                               lastModified={lastModifiedBySetKey[makeSetKey(ex.id, setIdx + 1)]}
                               onUpdateSeconds={(value) => updateDuration(ex.id, setIdx, value)}
@@ -1048,10 +954,10 @@ export default function LogWorkoutPage() {
           <div className="flex justify-center">
             <button
               onClick={save}
-              disabled={loading || !hasAtLeastOneCompleteSet}
+              disabled={isGlobalBusy || savingSetKey != null || !hasAtLeastOneCompleteSet}
               className={`rounded-md px-5 py-2 font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-60 ${CLASS_GRADIENT_PRIMARY}`}
             >
-              {loading ? "Saving..." : "Save Workout"}
+              {busyAction === "saveWorkout" ? "Saving..." : "Save Workout"}
             </button>
           </div>
         </div>
@@ -1082,7 +988,7 @@ export default function LogWorkoutPage() {
                     <button
                       type="button"
                       onClick={() => requestEditSessionDate(session)}
-                      disabled={loading}
+                      disabled={isGlobalBusy}
                       className="rounded-md border border-zinc-500/70 px-2 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/40 disabled:opacity-50"
                     >
                       Edit
@@ -1091,7 +997,7 @@ export default function LogWorkoutPage() {
                     <button
                       type="button"
                       onClick={() => void requestSessionSummary(session)}
-                      disabled={loading || sessionSummaryLoading}
+                      disabled={isGlobalBusy || sessionSummaryLoading}
                       className="rounded-md border border-amber-300/60 px-2 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/10 disabled:opacity-50"
                     >
                       Summary
@@ -1100,7 +1006,7 @@ export default function LogWorkoutPage() {
                     <button
                       type="button"
                       onClick={() => requestDeleteSession(session)}
-                      disabled={loading}
+                      disabled={isGlobalBusy}
                       className="rounded-md border border-red-400/60 px-2 py-1 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
                     >
                       Delete
@@ -1188,7 +1094,7 @@ export default function LogWorkoutPage() {
               <GradientButton
                 label="Save Date"
                 onClick={() => void confirmEditSessionDate()}
-                disabled={loading}
+                disabled={isGlobalBusy}
               />
             </div>
           </div>

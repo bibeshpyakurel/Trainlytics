@@ -13,12 +13,19 @@ import type {
 import { formatWeightFromKg } from "@/features/bodyweight/utils";
 import { toLocalIsoDate } from "@/lib/localDate";
 import {
+  bodyweightEntryExistsForDate,
   deleteBodyweightLogForCurrentUser,
   getCurrentUserId,
   loadBodyweightLogsForCurrentUser,
   updateBodyweightLogForCurrentUser,
   upsertBodyweightEntry,
 } from "@/features/bodyweight/service";
+import {
+  deleteBodyweightWorkflow,
+  editBodyweightWorkflow,
+  evaluateSaveBodyweightRequest,
+  persistBodyweightWorkflow,
+} from "@/features/bodyweight/workflows";
 import {
   getBodyweightChartView,
   getBodyweightHistoryView,
@@ -59,14 +66,15 @@ export default function BodyweightPage() {
   const [historyStartDate, setHistoryStartDate] = useState("");
   const [historyEndDate, setHistoryEndDate] = useState("");
 
-  async function loadLogs() {
+  async function loadLogs(): Promise<string | null> {
     const { logs: loadedLogs, error } = await loadBodyweightLogsForCurrentUser();
     if (error) {
       setMsg(error);
-      return;
+      return error;
     }
 
     setLogs(loadedLogs);
+    return null;
   }
 
   useEffect(() => {
@@ -108,10 +116,15 @@ export default function BodyweightPage() {
   }
 
   async function persistWeightEntry(payload: PendingOverwrite) {
-    const error = await upsertBodyweightEntry(payload);
+    const result = await persistBodyweightWorkflow({ upsertBodyweightEntry }, payload);
+    if (result.status === "error") {
+      setMsg(result.message);
+      setLoading(false);
+      return;
+    }
 
-    if (error) {
-      setMsg(error);
+    const refreshError = await loadLogs();
+    if (refreshError) {
       setLoading(false);
       return;
     }
@@ -119,48 +132,29 @@ export default function BodyweightPage() {
     setMsg("Saved ✅");
     setWeight("");
     setLoading(false);
-    loadLogs();
   }
 
   async function save() {
     setLoading(true);
     setMsg(null);
 
-    const { userId, error: userError } = await getCurrentUserId();
-    if (userError) {
-      setMsg(userError);
+    const result = await evaluateSaveBodyweightRequest(
+      { getCurrentUserId, bodyweightEntryExistsForDate },
+      { today, date, weight, unit, logs }
+    );
+    if (result.status === "error") {
+      setMsg(result.message);
       setLoading(false);
       return;
     }
 
-    if (!userId) {
-      setMsg("Not logged in.");
+    if (result.status === "confirm_overwrite") {
+      setPendingOverwrite(result.payload);
       setLoading(false);
       return;
     }
 
-    const weightNum = Number(weight);
-    if (!Number.isFinite(weightNum) || weightNum <= 0) {
-      setMsg("Enter valid weight.");
-      setLoading(false);
-      return;
-    }
-
-    const payload: PendingOverwrite = {
-      userId,
-      logDate: date,
-      weightNum,
-      inputUnit: unit,
-    };
-
-    const hasEntryForDate = logs.some((log) => log.log_date === date);
-    if (hasEntryForDate) {
-      setPendingOverwrite(payload);
-      setLoading(false);
-      return;
-    }
-
-    await persistWeightEntry(payload);
+    await persistWeightEntry(result.payload);
   }
 
   async function confirmReplace() {
@@ -189,17 +183,21 @@ export default function BodyweightPage() {
     setLoading(true);
     setMsg(null);
 
-    const { error } = await deleteBodyweightLogForCurrentUser(target.id);
+    const result = await deleteBodyweightWorkflow({ deleteBodyweightLogForCurrentUser }, target.id);
+    if (result.status === "error") {
+      setMsg(result.message);
+      setLoading(false);
+      return;
+    }
 
-    if (error) {
-      setMsg(error);
+    const refreshError = await loadLogs();
+    if (refreshError) {
       setLoading(false);
       return;
     }
 
     setMsg("Deleted 🗑️");
     setLoading(false);
-    loadLogs();
   }
 
   function cancelDeleteLog() {
@@ -225,36 +223,31 @@ export default function BodyweightPage() {
   async function confirmEditLog() {
     if (!pendingEdit) return;
 
-    if (pendingEdit.newLogDate > today) {
-      setMsg("Future log dates are not allowed.");
-      return;
-    }
-
-    const weightNum = Number(pendingEdit.weight);
-    if (!Number.isFinite(weightNum) || weightNum <= 0) {
-      setMsg("Enter valid weight.");
-      return;
-    }
-
     setLoading(true);
     setMsg(null);
 
-    const error = await updateBodyweightLogForCurrentUser(pendingEdit.id, {
-      logDate: pendingEdit.newLogDate,
-      weightNum,
-      inputUnit: pendingEdit.unit,
+    const result = await editBodyweightWorkflow({ updateBodyweightLogForCurrentUser }, {
+      today,
+      logId: pendingEdit.id,
+      newLogDate: pendingEdit.newLogDate,
+      weight: pendingEdit.weight,
+      unit: pendingEdit.unit,
     });
-
-    if (error) {
+    if (result.status === "error") {
       setLoading(false);
-      setMsg(error);
+      setMsg(result.message);
+      return;
+    }
+
+    const refreshError = await loadLogs();
+    if (refreshError) {
+      setLoading(false);
       return;
     }
 
     setPendingEdit(null);
     setLoading(false);
     setMsg("Updated bodyweight log ✅");
-    void loadLogs();
   }
 
   return (
@@ -460,6 +453,7 @@ export default function BodyweightPage() {
               <input
                 id="log-date"
                 type="date"
+                max={today}
                 className="w-full rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}

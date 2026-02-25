@@ -8,6 +8,9 @@ type RequestBody = {
   email?: string;
 };
 
+const ACCOUNT_STATUS_PER_PAGE = 1000;
+const ACCOUNT_STATUS_TIMEOUT_MS = 2500;
+
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
@@ -33,11 +36,21 @@ export async function POST(request: Request) {
     });
 
     let exists = false;
-    const perPage = 200;
-    for (let page = 1; page <= 10; page += 1) {
+    let page = 1;
+    const startedAt = Date.now();
+
+    while (true) {
+      if (Date.now() - startedAt > ACCOUNT_STATUS_TIMEOUT_MS) {
+        logServerError("api.auth.account_status.lookup_timeout", {
+          page,
+          timeoutMs: ACCOUNT_STATUS_TIMEOUT_MS,
+        });
+        return jsonError("Account status check timed out. Please try again.", 503);
+      }
+
       const { data, error } = await supabaseAdmin.auth.admin.listUsers({
         page,
-        perPage,
+        perPage: ACCOUNT_STATUS_PER_PAGE,
       });
 
       if (error) {
@@ -51,9 +64,11 @@ export async function POST(request: Request) {
         break;
       }
 
-      if (users.length < perPage) {
+      if (users.length < ACCOUNT_STATUS_PER_PAGE) {
         break;
       }
+
+      page += 1;
     }
 
     return NextResponse.json({ exists });

@@ -47,6 +47,24 @@ export async function upsertBodyweightEntry(payload: PendingOverwrite): Promise<
   return error ? error.message : null;
 }
 
+export async function bodyweightEntryExistsForDate(
+  userId: string,
+  logDate: string
+): Promise<{ exists: boolean; error: string | null }> {
+  const { data, error } = await supabase
+    .from(TABLES.bodyweightLogs)
+    .select("id")
+    .eq("user_id", userId)
+    .eq("log_date", logDate)
+    .limit(1);
+
+  if (error) {
+    return { exists: false, error: error.message };
+  }
+
+  return { exists: (data?.length ?? 0) > 0, error: null };
+}
+
 export async function getCurrentUserId(): Promise<{ userId: string | null; error: string | null }> {
   return getCurrentUserIdFromSession();
 }
