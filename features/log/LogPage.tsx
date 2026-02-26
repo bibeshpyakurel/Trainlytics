@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { toKg, type Unit } from "@/lib/convertWeight";
 import { TABLES } from "@/lib/dbNames";
@@ -42,7 +41,6 @@ import type {
 } from "@/features/log/types";
 
 export default function LogWorkoutPage() {
-  const searchParams = useSearchParams();
   const today = useMemo(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -160,12 +158,13 @@ export default function LogWorkoutPage() {
   }, [durationForm, exercises, weightedForm]);
 
   useEffect(() => {
-    const requestedSplit = searchParams.get("split");
+    if (typeof window === "undefined") return;
+    const requestedSplit = new URLSearchParams(window.location.search).get("split");
     if (requestedSplit !== "push" && requestedSplit !== "pull" && requestedSplit !== "legs" && requestedSplit !== "core") {
       return;
     }
     setSplit((current) => (current === requestedSplit ? current : requestedSplit));
-  }, [searchParams]);
+  }, []);
 
   useEffect(() => {
     if (!msg) return;
