@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  --color-red-300: #dc2626;
+  --color-emerald-300: #059669;
+  --color-amber-200: #b45309;
+  --color-zinc-50: #09090b;
+  --color-zinc-100: #18181b;
+  --color-zinc-200: #27272a;
+  --color-zinc-300: #3f3f46;
+  --color-zinc-400: #52525b;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #a1a1aa;
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-800: #e4e4e7;
+  --color-zinc-900: #f4f4f5;
+  --color-zinc-950: #fafafa;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --color-red-300: #fca5a5;
+  --color-emerald-300: #6ee7b7;
+  --color-amber-200: #fde68a;
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #f4f4f5;
+  --color-zinc-200: #e4e4e7;
+  --color-zinc-300: #d4d4d8;
+  --color-zinc-400: #a1a1aa;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #52525b;
+  --color-zinc-700: #3f3f46;
+  --color-zinc-800: #27272a;
+  --color-zinc-900: #18181b;
+  --color-zinc-950: #09090b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+:root:not(.dark) body {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(251, 191, 36, 0.22), transparent 34%),
+    radial-gradient(circle at 88% 14%, rgba(59, 130, 246, 0.16), transparent 36%),
+    radial-gradient(circle at 72% 82%, rgba(244, 114, 182, 0.14), transparent 40%),
+    linear-gradient(140deg, #fffbeb 0%, #f8fafc 45%, #eef2ff 100%);
+  background-attachment: fixed;
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at 12% 14%, rgba(245, 158, 11, 0.18), transparent 34%),
+    radial-gradient(circle at 84% 16%, rgba(14, 165, 233, 0.14), transparent 36%),
+    radial-gradient(circle at 76% 82%, rgba(168, 85, 247, 0.16), transparent 42%),
+    linear-gradient(145deg, #09090b 0%, #111827 52%, #020617 100%);
+  background-attachment: fixed;
+}
+
+:root:not(.dark) .text-zinc-500 {
+  color: #52525b;
+}
+
+:root:not(.dark) .text-zinc-400 {
+  color: #3f3f46;
+}
+
+:root:not(.dark) .text-zinc-300 {
+  color: #27272a;
+}
+
+:root:not(.dark) .text-zinc-300\/80 {
+  color: rgba(39, 39, 42, 0.8);
+}
+
+:root:not(.dark) .text-white {
+  color: #18181b;
+}
+
+:root:not(.dark) .text-zinc-900 {
+  color: #18181b;
+}
+
+:root:not(.dark) .text-red-300 {
+  color: #b91c1c;
+}
+
+:root:not(.dark) .text-emerald-300 {
+  color: #047857;
+}
+
+:root:not(.dark) .text-amber-300,
+:root:not(.dark) .text-amber-300\/80,
+:root:not(.dark) .text-amber-300\/85 {
+  color: #b45309;
+}
+
+:root:not(.dark) .text-amber-200,
+:root:not(.dark) .text-amber-200\/90 {
+  color: #92400e;
+}
+
+:root:not(.dark) [class*="rounded-2xl"][class*="border-zinc-700/80"][class*="bg-zinc-900/70"],
+:root:not(.dark) [class*="rounded-3xl"][class*="border-zinc-700/80"][class*="bg-zinc-900/70"],
+:root:not(.dark) [class*="rounded-2xl"][class*="border-zinc-700/70"][class*="bg-zinc-900/70"],
+:root:not(.dark) [class*="rounded-xl"][class*="border-zinc-700"][class*="bg-zinc-900/95"],
+:root:not(.dark) [class*="rounded-xl"][class*="border-zinc-700/80"][class*="bg-zinc-950/60"],
+:root:not(.dark) [class*="rounded-2xl"][class*="border-zinc-700/70"][class*="bg-zinc-950/55"],
+:root:not(.dark) [class*="rounded-xl"][class*="border-zinc-700/70"][class*="bg-zinc-950/40"] {
+  background-color: rgba(255, 255, 255, 0.72);
+  border-color: rgba(63, 63, 70, 0.2);
+  box-shadow: 0 8px 24px rgba(24, 24, 27, 0.08), 0 2px 6px rgba(24, 24, 27, 0.05);
+}
+
+:root:not(.dark) header[class*="bg-zinc-950/80"] {
+  background-color: rgba(255, 255, 255, 0.76);
+  border-color: rgba(63, 63, 70, 0.2);
+}
+
+:root:not(.dark) [class*="border-zinc-700/70"][class*="bg-zinc-900/70"][class*="p-1.5"] {
+  background-color: rgba(255, 255, 255, 0.82);
+  border-color: rgba(63, 63, 70, 0.22);
+}
+
+:root:not(.dark) input[class*="bg-zinc-950/80"],
+:root:not(.dark) select[class*="bg-zinc-950/80"] {
+  background-color: rgba(255, 255, 255, 0.88);
+  border-color: rgba(82, 82, 91, 0.35);
+  color: #18181b;
+}
+
+:root:not(.dark) .recharts-default-tooltip {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid rgba(63, 63, 70, 0.24) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 10px 24px rgba(24, 24, 27, 0.12) !important;
+}
+
+:root:not(.dark) .recharts-default-tooltip .recharts-tooltip-label,
+:root:not(.dark) .recharts-default-tooltip .recharts-tooltip-item-name,
+:root:not(.dark) .recharts-default-tooltip .recharts-tooltip-item-value {
+  color: #18181b !important;
+}
