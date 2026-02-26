@@ -1,4 +1,4 @@
-# Gym Tracker
+# Trainlytics
 
 A full-stack personal fitness tracker focused on consistency, clean data separation per user, and reliable auth flows.
 
@@ -11,7 +11,7 @@ Users can:
 
 ## Live Demo
 
-- `https://gym-tracker-gold-mu.vercel.app`
+- `https://trainlytics-gold-mu.vercel.app`
 
 ## Key Features
 

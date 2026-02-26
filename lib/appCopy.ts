@@ -1,6 +1,6 @@
 export const APP_COPY = {
-  appName: "Gym Tracker",
-  loginBrand: "Personal Gym Tracker",
+  appName: "Trainlytics",
+  loginBrand: "Trainlytics",
   launchPreparingText: "Preparing your dashboard...",
   loginHeading: "Welcome back",
 } as const;

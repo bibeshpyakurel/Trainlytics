@@ -199,7 +199,7 @@ export async function POST(request: Request) {
       .slice(-8);
 
     const systemPrompt = [
-      "You are an insights coach for a gym-tracker app.",
+      "You are an insights coach for a Trainlytics app.",
       userContext.firstName ? `The athlete's first name is ${userContext.firstName}.` : "",
       "You MUST answer using only the provided user context data.",
       "Use yearlyRawLogs and yearlyTimeline for detailed personal-history questions across workouts, bodyweight, calories, burn, net energy, and strength.",
