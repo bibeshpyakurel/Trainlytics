@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { toKg, type Unit } from "@/lib/convertWeight";
 import { TABLES } from "@/lib/dbNames";
@@ -41,6 +42,7 @@ import type {
 } from "@/features/log/types";
 
 export default function LogWorkoutPage() {
+  const searchParams = useSearchParams();
   const today = useMemo(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -156,6 +158,14 @@ export default function LogWorkoutPage() {
 
     return false;
   }, [durationForm, exercises, weightedForm]);
+
+  useEffect(() => {
+    const requestedSplit = searchParams.get("split");
+    if (requestedSplit !== "push" && requestedSplit !== "pull" && requestedSplit !== "legs" && requestedSplit !== "core") {
+      return;
+    }
+    setSplit((current) => (current === requestedSplit ? current : requestedSplit));
+  }, [searchParams]);
 
   useEffect(() => {
     if (!msg) return;
@@ -491,8 +501,45 @@ export default function LogWorkoutPage() {
         .from(TABLES.workoutSets)
         .upsert(payload, { onConflict: "session_id,exercise_id,set_number" });
       if (upsertSetErr) {
-        setMsg(`Failed saving set: ${upsertSetErr.message}`);
-        return;
+        if (!/no unique|no exclusion/i.test(upsertSetErr.message)) {
+          setMsg(`Failed saving set: ${upsertSetErr.message}`);
+          return;
+        }
+
+        // Backward-compatible fallback for databases missing the unique constraint
+        // on (session_id, exercise_id, set_number).
+        const { data: existingRows, error: existingErr } = await supabase
+          .from(TABLES.workoutSets)
+          .select("id")
+          .eq("session_id", sessionId)
+          .eq("exercise_id", ex.id)
+          .eq("set_number", setNumber)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (existingErr) {
+          setMsg(`Failed saving set: ${existingErr.message}`);
+          return;
+        }
+
+        const existingId = (existingRows?.[0] as { id: string } | undefined)?.id;
+        if (existingId) {
+          const { error: updateErr } = await supabase
+            .from(TABLES.workoutSets)
+            .update(payload)
+            .eq("id", existingId)
+            .eq("user_id", userId);
+          if (updateErr) {
+            setMsg(`Failed saving set: ${updateErr.message}`);
+            return;
+          }
+        } else {
+          const { error: insertErr } = await supabase.from(TABLES.workoutSets).insert(payload);
+          if (insertErr) {
+            setMsg(`Failed saving set: ${insertErr.message}`);
+            return;
+          }
+        }
       }
 
       setLastModifiedBySetKey((prev) => ({ ...prev, [key]: new Date().toISOString() }));

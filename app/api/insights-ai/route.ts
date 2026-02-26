@@ -4,18 +4,11 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { jsonError } from "@/lib/apiResponse";
 import { getInsightsAiEnv } from "@/lib/env.server";
 import { logServerError } from "@/lib/monitoring";
+import { loadInsightsAiContextForUser } from "@/lib/insightsAiContext.server";
 
 type ChatMessage = {
   role: "user" | "assistant";
   text: string;
-};
-
-type InsightsContext = {
-  facts?: Array<{ label: string; value: string; detail: string }>;
-  correlations?: Array<{ label: string; value: number | null; interpretation: string; overlapDays: number }>;
-  improvements?: string[];
-  achievements?: Array<{ period: string; title: string; detail: string }>;
-  suggestions?: string[];
 };
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -164,13 +157,11 @@ export async function POST(request: Request) {
 
     let body: {
       question?: string;
-      context?: InsightsContext;
       history?: ChatMessage[];
     };
     try {
       body = JSON.parse(rawBody) as {
         question?: string;
-        context?: InsightsContext;
         history?: ChatMessage[];
       };
     } catch {
@@ -200,12 +191,22 @@ export async function POST(request: Request) {
       return jsonError("Question is required.", 400);
     }
 
-    const context = body.context ?? {};
-    const history = (body.history ?? []).slice(-8);
+    const userContext = await loadInsightsAiContextForUser(supabase, user.id);
+    const history = (body.history ?? [])
+      .filter((item) => (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
+      .map((item) => ({ role: item.role, text: item.text.trim() }))
+      .filter((item) => item.text.length > 0)
+      .slice(-8);
 
     const systemPrompt = [
       "You are an insights coach for a gym-tracker app.",
+      userContext.firstName ? `The athlete's first name is ${userContext.firstName}.` : "",
       "You MUST answer using only the provided user context data.",
+      "Use yearlyRawLogs and yearlyTimeline for detailed personal-history questions across workouts, bodyweight, calories, burn, net energy, and strength.",
+      "For date-specific questions (for example 'what workout did I do on 2026-02-02?'), use yearlyTimeline.workoutSessions and yearlyTimeline.dailyMetrics.",
+      "For month-specific average questions (for example February 2026), use monthlyAverages when available.",
+      "For 'first/last calories log' questions, use calorieCoverage.firstLogDate and calorieCoverage.lastLogDate.",
+      "Whenever answering about bodyweight, include BOTH kg and lb values when data exists.",
       "If data is missing or insufficient, say so clearly.",
       "Be concise, practical, and action-oriented.",
       "When useful, provide 3-5 bullets.",
@@ -214,7 +215,7 @@ export async function POST(request: Request) {
 
     const contextPrompt = [
       "User context data:",
-      JSON.stringify(context),
+      JSON.stringify(userContext),
     ].join("\n");
 
     const messages = [
@@ -263,7 +264,16 @@ export async function POST(request: Request) {
     }
 
     if (!response.ok) {
-      logServerError("api.insights_ai.provider_error", `status_${response.status}`);
+      let providerMessage = `status_${response.status}`;
+      try {
+        const errorBody = (await response.json()) as { error?: { message?: string } };
+        if (errorBody?.error?.message) {
+          providerMessage = `${providerMessage}:${errorBody.error.message}`;
+        }
+      } catch {
+        // Ignore provider body parse failures and keep fallback status-only message.
+      }
+      logServerError("api.insights_ai.provider_error", providerMessage);
       logInsightsRequest("api.insights_ai.request_failed", {
         requestId,
         userId: user.id,
@@ -271,9 +281,10 @@ export async function POST(request: Request) {
         status: 502,
         reason: "provider_non_ok",
         providerStatus: response.status,
+        providerMessage,
         durationMs: Date.now() - startedAt,
       });
-      return jsonError(`AI provider error: ${response.status}`, 502);
+      return jsonError(`AI provider error: ${response.status}. ${providerMessage}`, 502);
     }
 
     const data = (await response.json()) as {

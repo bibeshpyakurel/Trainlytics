@@ -40,6 +40,11 @@ describe("dashboard view model", () => {
         latestBodyweight: { log_date: "2026-02-20", weight_input: 180, unit_input: "lb" },
         latestCalories: { log_date: "2026-02-20", pre_workout_kcal: 300, post_workout_kcal: 500 },
         latestMetabolicBurn: { log_date: "2026-02-20", estimated_kcal_spent: 2300 },
+        nextSessionSuggestion: {
+          split: "pull",
+          reason: "Last PULL session was 2026-02-14, which is oldest among your tracked splits.",
+          lastDoneDate: "2026-02-14",
+        },
         avgCalories7d: 2400,
         avgBurn7d: 2200,
         netEnergy7d: 200,

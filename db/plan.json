@@ -18,6 +18,7 @@
         "db/migrations/normalize_exercises_catalog.sql",
         "db/migrations/archive_legacy_duplicate_exercises.sql",
         "db/migrations/save_workout_sets_atomic.sql",
+        "db/migrations/workout_sets_unique_session_exercise_set.sql",
         "db/migrations/metabolic_activity_logs.sql"
       ]
     }

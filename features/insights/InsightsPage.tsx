@@ -89,6 +89,9 @@ const TREND_METRICS: TrendMetricConfig[] = [
   { id: "strength", label: "Strength", unit: "score", targetLogsPerWeek: 3 },
 ];
 
+const VOICE_IDLE_STOP_MS = 5_000;
+const VOICE_RESTART_DELAY_MS = 180;
+
 function filterSeriesByRange(series: InsightMetricPoint[], days: number | null): InsightMetricPoint[] {
   if (days == null) return series;
 
@@ -312,6 +315,45 @@ export default function InsightsPage() {
   const [chartMode, setChartMode] = useState<ChartMode>("index");
   const [threadHydrated, setThreadHydrated] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const keepListeningRef = useRef(false);
+  const voiceStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+
+  function clearVoiceStopTimer() {
+    const timer = voiceStopTimerRef.current;
+    if (timer != null) {
+      clearTimeout(timer);
+      voiceStopTimerRef.current = null;
+    }
+  }
+
+  function stopVoiceInput(options?: { reason?: string }) {
+    keepListeningRef.current = false;
+    clearVoiceStopTimer();
+
+    const activeRecognition = recognitionRef.current;
+    recognitionRef.current = null;
+    if (activeRecognition) {
+      try {
+        activeRecognition.stop?.();
+        activeRecognition.abort?.();
+      } catch {
+        // Ignore provider-specific stop errors.
+      }
+    }
+
+    setIsListening(false);
+    if (options?.reason) {
+      setAssistantError(options.reason);
+    }
+  }
+
+  function scheduleVoiceStop() {
+    clearVoiceStopTimer();
+    voiceStopTimerRef.current = setTimeout(() => {
+      stopVoiceInput();
+    }, VOICE_IDLE_STOP_MS);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -627,17 +669,7 @@ export default function InsightsPage() {
     }
 
     return () => {
-      const activeRecognition = recognitionRef.current;
-      recognitionRef.current = null;
-      if (activeRecognition) {
-        try {
-          activeRecognition.stop?.();
-          activeRecognition.abort?.();
-        } catch {
-          // Ignore cleanup errors during unmount.
-        }
-      }
-      setIsListening(false);
+      stopVoiceInput();
     };
   }, []);
 
@@ -678,6 +710,12 @@ export default function InsightsPage() {
     sessionStorage.setItem(threadStorageKey, JSON.stringify(payload));
   }, [assistantThread, threadStorageKey, threadHydrated]);
 
+  useEffect(() => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+  }, [assistantThread, assistantLoading]);
+
   function speak(text: string) {
     if (typeof window === "undefined" || !window.speechSynthesis || !speakReplies) return;
     window.speechSynthesis.cancel();
@@ -698,42 +736,53 @@ export default function InsightsPage() {
       return;
     }
 
-    const recognition = new speechRecognitionCtor();
-    recognitionRef.current = recognition;
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      const transcript = event.results?.[0]?.[0]?.transcript;
-      if (transcript) {
-        setQuestion((prev) => (prev ? `${prev} ${transcript}` : transcript));
-      }
-    };
-    recognition.onerror = () => {
-      setAssistantError("Voice input failed. Please try again.");
-      setIsListening(false);
-      if (recognitionRef.current === recognition) {
-        recognitionRef.current = null;
-      }
-    };
-    recognition.onend = () => {
-      setIsListening(false);
-      if (recognitionRef.current === recognition) {
-        recognitionRef.current = null;
+    keepListeningRef.current = true;
+    setAssistantError(null);
+    scheduleVoiceStop();
+
+    const startRecognition = () => {
+      if (!keepListeningRef.current) return;
+
+      const recognition = new speechRecognitionCtor();
+      recognitionRef.current = recognition;
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.continuous = true;
+      recognition.onresult = (event) => {
+        const lastIndex = event.results.length - 1;
+        const transcript = event.results?.[lastIndex]?.[0]?.transcript?.trim();
+        if (transcript) {
+          scheduleVoiceStop();
+          setQuestion((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        }
+      };
+      recognition.onerror = () => {
+        stopVoiceInput({ reason: "Voice input failed. Please try again." });
+      };
+      recognition.onend = () => {
+        if (recognitionRef.current === recognition) {
+          recognitionRef.current = null;
+        }
+        if (!keepListeningRef.current) {
+          setIsListening(false);
+          return;
+        }
+        setTimeout(() => {
+          if (keepListeningRef.current) {
+            startRecognition();
+          }
+        }, VOICE_RESTART_DELAY_MS);
+      };
+
+      setIsListening(true);
+      try {
+        recognition.start();
+      } catch {
+        stopVoiceInput({ reason: "Voice input could not start. Please check microphone permissions." });
       }
     };
 
-    setAssistantError(null);
-    setIsListening(true);
-    try {
-      recognition.start();
-    } catch {
-      if (recognitionRef.current === recognition) {
-        recognitionRef.current = null;
-      }
-      setIsListening(false);
-      setAssistantError("Voice input could not start. Please check microphone permissions.");
-    }
+    startRecognition();
   }
 
   async function requestAssistantAnswer(
@@ -1032,7 +1081,7 @@ export default function InsightsPage() {
                 ))}
               </div>
 
-              <div className="mt-4 space-y-3 overflow-y-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-3 lg:min-h-0 lg:flex-1">
+              <div ref={chatScrollRef} className="mt-4 space-y-3 overflow-y-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-3 lg:min-h-0 lg:flex-1">
                 {assistantThread.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-zinc-700/70 bg-zinc-900/40 px-3 py-3 text-sm text-zinc-400">
                     Try one of the quick prompts above, or ask anything about intake, burn, net energy, bodyweight, and strength history.

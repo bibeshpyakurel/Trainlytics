@@ -21,6 +21,11 @@ export type DashboardData = {
     log_date: string;
     estimated_kcal_spent: number;
   } | null;
+  nextSessionSuggestion: {
+    split: Split;
+    reason: string;
+    lastDoneDate: string | null;
+  };
   avgCalories7d: number | null;
   avgBurn7d: number | null;
   netEnergy7d: number | null;

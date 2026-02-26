@@ -41,6 +41,9 @@ type LatestCaloriesRow = { log_date: string; pre_workout_kcal: number | null; po
 type LatestMetabolicRow = { log_date: string; estimated_kcal_spent: number } | null;
 type CaloriesByDateRow = { log_date: string; pre_workout_kcal: number | null; post_workout_kcal: number | null };
 type MetabolicByDateRow = { log_date: string; estimated_kcal_spent: number };
+type SplitSessionHistoryRow = { session_date: string; split: "push" | "pull" | "legs" | "core" };
+
+const SPLIT_ORDER: Array<SplitSessionHistoryRow["split"]> = ["push", "pull", "legs", "core"];
 
 export function getDashboardWindowStartIso(window: DashboardChartWindow): string | null {
   if (window === "90d") return getLocalIsoDateDaysAgo(89);
@@ -108,6 +111,7 @@ export function buildDashboardDataFromResults(input: {
   metabolic7dRows: MetabolicByDateRow[];
   workoutSetRows: WorkoutSetRowForStrength[];
   workoutSessions: WorkoutSessionRow[];
+  splitSessionHistoryRows?: SplitSessionHistoryRow[];
   exercises: ExerciseMetaRow[];
 }): DashboardData {
   const strengthRows = buildStrengthRowsFromWorkoutData(
@@ -186,6 +190,35 @@ export function buildDashboardDataFromResults(input: {
   const energyDataCompletenessPct = energyBalanceSeries.length > 0
     ? (bothLoggedDays / energyBalanceSeries.length) * 100
     : 0;
+  const splitSessionHistoryRows = input.splitSessionHistoryRows ?? [];
+  const lastSessionBySplit = new Map<SplitSessionHistoryRow["split"], string | null>(
+    SPLIT_ORDER.map((split) => [split, null as string | null])
+  );
+  for (const row of splitSessionHistoryRows) {
+    const prev = lastSessionBySplit.get(row.split);
+    if (!prev || row.session_date > prev) {
+      lastSessionBySplit.set(row.split, row.session_date);
+    }
+  }
+  let nextSplit: SplitSessionHistoryRow["split"] = "push";
+  let reason = "No workout history yet. Start with a PUSH session.";
+  let lastDoneDate: string | null = null;
+  const neverDoneSplit = SPLIT_ORDER.find((split) => !lastSessionBySplit.get(split));
+  if (neverDoneSplit) {
+    nextSplit = neverDoneSplit;
+    reason = `No ${neverDoneSplit.toUpperCase()} session logged yet. Add one to balance your split rotation.`;
+  } else {
+    const sortedByOldest = [...SPLIT_ORDER]
+      .map((split) => ({ split, date: lastSessionBySplit.get(split) }))
+      .filter((entry): entry is { split: SplitSessionHistoryRow["split"]; date: string } => typeof entry.date === "string")
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const oldest = sortedByOldest[0];
+    if (oldest) {
+      nextSplit = oldest.split;
+      lastDoneDate = oldest.date;
+      reason = `Last ${oldest.split.toUpperCase()} session was ${oldest.date}, which is the oldest among your tracked splits.`;
+    }
+  }
 
   return {
     email: input.userEmail ?? "Athlete",
@@ -194,6 +227,11 @@ export function buildDashboardDataFromResults(input: {
     latestBodyweight: input.latestBodyweight,
     latestCalories: input.latestCalories,
     latestMetabolicBurn: input.latestMetabolicBurn,
+    nextSessionSuggestion: {
+      split: nextSplit,
+      reason,
+      lastDoneDate,
+    },
     avgCalories7d,
     avgBurn7d,
     netEnergy7d,
@@ -250,7 +288,7 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
 
   const sevenDaysAgoIso = getLocalIsoDateDaysAgo(6);
 
-  const [latestWorkoutRes, latestBodyweightRes, latestCaloriesRes, latestMetabolicRes, caloriesSeriesRes, metabolicSeriesRes, calories7dRes, metabolic7dRes, workoutSessionsRes, exercisesRes, profileRes] =
+  const [latestWorkoutRes, latestBodyweightRes, latestCaloriesRes, latestMetabolicRes, caloriesSeriesRes, metabolicSeriesRes, calories7dRes, metabolic7dRes, workoutSessionsRes, splitSessionHistoryRes, exercisesRes, profileRes] =
     await Promise.all([
       supabase
         .from(TABLES.workoutSessions)
@@ -294,6 +332,10 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
         .gte("log_date", sevenDaysAgoIso),
       workoutSessionsQuery,
       supabase
+        .from(TABLES.workoutSessions)
+        .select("session_date,split")
+        .eq("user_id", userId),
+      supabase
         .from(TABLES.exercises)
         .select("id,name,muscle_group")
         .eq("user_id", userId),
@@ -326,6 +368,7 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
       metabolic7dRes.error ||
       workoutSetsRes.error ||
       workoutSessionsRes.error ||
+      splitSessionHistoryRes.error ||
     exercisesRes.error
   ) {
     return {
@@ -341,6 +384,7 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
         metabolic7dRes.error?.message ||
         workoutSetsRes.error?.message ||
         workoutSessionsRes.error?.message ||
+        splitSessionHistoryRes.error?.message ||
         exercisesRes.error?.message ||
         "Failed to load dashboard.",
     };
@@ -363,6 +407,7 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
       metabolic7dRows: (metabolic7dRes.data ?? []) as MetabolicByDateRow[],
       workoutSetRows: (workoutSetsRes.data ?? []) as WorkoutSetRowForStrength[],
       workoutSessions: (workoutSessionsRes.data ?? []) as WorkoutSessionRow[],
+      splitSessionHistoryRows: (splitSessionHistoryRes.data ?? []) as SplitSessionHistoryRow[],
       exercises: (exercisesRes.data ?? []) as ExerciseMetaRow[],
     }),
   };
