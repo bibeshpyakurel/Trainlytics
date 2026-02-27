@@ -12,7 +12,7 @@ type ChatMessage = {
 };
 
 const MAX_REQUEST_BODY_BYTES = 24 * 1024;
-const PROVIDER_TIMEOUT_MS = 15_000;
+const PROVIDER_TIMEOUT_MS = 45_000;
 
 function logInsightsRequest(event: string, context: Record<string, unknown>) {
   console.info(
