@@ -203,7 +203,6 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model: env.model,
-          temperature: 0.3,
           messages,
         }),
         signal: controller.signal,
