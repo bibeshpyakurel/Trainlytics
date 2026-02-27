@@ -70,14 +70,14 @@ export default function AppNav() {
 
   return (
     <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/80 px-4 py-3 backdrop-blur-md">
-      <div className="mx-auto flex w-full max-w-5xl items-center gap-3 sm:justify-between">
+      <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3">
         <p className="hidden text-xs font-semibold uppercase tracking-[0.2em] text-amber-300/80 sm:block">
           Gym Mode: On
         </p>
 
-        <div className="w-full overflow-x-auto sm:w-auto sm:overflow-visible">
-          <div className="flex min-w-max items-center gap-2">
-            <nav className="flex items-center gap-2 rounded-2xl border border-zinc-700/70 bg-zinc-900/70 p-1.5 shadow-lg">
+        <div className="w-full sm:w-auto">
+          <div className="flex w-full items-center gap-2 sm:w-auto sm:min-w-max">
+            <nav className="flex flex-1 items-center justify-between gap-1 rounded-2xl border border-zinc-700/70 bg-zinc-900/70 p-1.5 shadow-lg sm:flex-none sm:justify-start sm:gap-2">
               {navItems.map((item) => {
                 const isActive = pathname?.startsWith(item.href);
 
@@ -85,7 +85,7 @@ export default function AppNav() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`rounded-xl px-3 py-2 text-xs font-semibold transition sm:px-4 sm:text-sm ${
+                    className={`flex-1 rounded-xl px-2 py-2 text-center text-xs font-semibold transition sm:flex-none sm:px-4 sm:text-sm ${
                       isActive
                         ? `${CLASS_GRADIENT_PRIMARY} text-zinc-900`
                         : "text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
@@ -101,7 +101,7 @@ export default function AppNav() {
             </nav>
             <Link
               href={ROUTES.profile}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition ${
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition sm:px-3 ${
                 isProfileActive
                   ? `border-amber-300/80 ${CLASS_GRADIENT_PRIMARY} text-zinc-900`
                   : "border-zinc-700/70 bg-zinc-900/70 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800"
