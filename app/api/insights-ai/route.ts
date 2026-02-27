@@ -11,29 +11,8 @@ type ChatMessage = {
   text: string;
 };
 
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 10;
 const MAX_REQUEST_BODY_BYTES = 24 * 1024;
 const PROVIDER_TIMEOUT_MS = 15_000;
-
-const rateLimitByUser = new Map<string, { windowStartMs: number; count: number }>();
-
-function consumeRateLimit(userId: string, nowMs: number) {
-  const current = rateLimitByUser.get(userId);
-  if (!current || nowMs - current.windowStartMs >= RATE_LIMIT_WINDOW_MS) {
-    rateLimitByUser.set(userId, { windowStartMs: nowMs, count: 1 });
-    return { allowed: true, remaining: RATE_LIMIT_MAX_REQUESTS - 1, retryAfterSeconds: 0 };
-  }
-
-  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((current.windowStartMs + RATE_LIMIT_WINDOW_MS - nowMs) / 1000));
-    return { allowed: false, remaining: 0, retryAfterSeconds };
-  }
-
-  current.count += 1;
-  rateLimitByUser.set(userId, current);
-  return { allowed: true, remaining: RATE_LIMIT_MAX_REQUESTS - current.count, retryAfterSeconds: 0 };
-}
 
 function logInsightsRequest(event: string, context: Record<string, unknown>) {
   console.info(
@@ -104,22 +83,6 @@ export async function POST(request: Request) {
       durationMs: Date.now() - startedAt,
     });
     return jsonError("Authentication required.", 401);
-  }
-
-  const rateLimit = consumeRateLimit(user.id, Date.now());
-  if (!rateLimit.allowed) {
-    const response = jsonError("Too many requests. Please try again soon.", 429);
-    response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
-    logInsightsRequest("api.insights_ai.request_denied", {
-      requestId,
-      userId: user.id,
-      clientIp,
-      status: 429,
-      reason: "rate_limited",
-      retryAfterSeconds: rateLimit.retryAfterSeconds,
-      durationMs: Date.now() - startedAt,
-    });
-    return response;
   }
 
   let env: ReturnType<typeof getInsightsAiEnv>;
@@ -312,7 +275,6 @@ export async function POST(request: Request) {
       questionChars: question.length,
       bodyBytes,
       historyMessages: history.length,
-      remainingInWindow: rateLimit.remaining,
       durationMs: Date.now() - startedAt,
     });
     return NextResponse.json({ answer });
