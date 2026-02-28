@@ -25,6 +25,7 @@ export type InsightMetricPoint = {
 export type InsightsData = {
   email: string;
   firstName: string | null;
+  profileHeightCm: number | null;
   facts: InsightFact[];
   correlations: InsightCorrelation[];
   improvements: string[];
@@ -32,6 +33,7 @@ export type InsightsData = {
   suggestions: string[];
   bodyweightSeries: InsightMetricPoint[];
   caloriesSeries: InsightMetricPoint[];
+  maintenanceSeries: InsightMetricPoint[];
   metabolicActivitySeries: InsightMetricPoint[];
   netEnergySeries: InsightMetricPoint[];
   strengthSeries: InsightMetricPoint[];

@@ -2,11 +2,18 @@ import type { Unit } from "@/lib/convertWeight";
 import type { BodyweightLog, ChartRange, HistoryFilterMode } from "@/features/bodyweight/types";
 import { CHART_DAYS_BY_RANGE, formatWeightFromKg } from "@/features/bodyweight/utils";
 import { getLocalIsoDateDaysAgo } from "@/lib/localDate";
+import { calculateBmi } from "@/lib/energyCalculations";
 
 type ChartPoint = {
   logDate: string;
   label: string;
   weight: number;
+};
+
+type BmiChartPoint = {
+  logDate: string;
+  label: string;
+  bmi: number;
 };
 
 export function getBodyweightSummary(logs: BodyweightLog[], displayUnit: Unit) {
@@ -56,6 +63,51 @@ export function getBodyweightChartView(
   const yMaxRaw = maxWeight + basePadding + (span === minSpan ? minSpan / 2 : 0);
   const yMin = Math.floor(yMinRaw / tickStep) * tickStep;
   const yMax = Math.ceil(yMaxRaw / tickStep) * tickStep;
+  const yTicks = Array.from(
+    { length: Math.floor((yMax - yMin) / tickStep) + 1 },
+    (_, index) => Number((yMin + index * tickStep).toFixed(1))
+  );
+
+  return { chartData, yMin, yMax, yTicks, rangeStartIso };
+}
+
+function buildFullBmiChartData(logs: BodyweightLog[], heightCm: number): BmiChartPoint[] {
+  return [...logs]
+    .sort((a, b) => a.log_date.localeCompare(b.log_date))
+    .map((log) => {
+      const date = new Date(`${log.log_date}T00:00:00`);
+      return {
+        logDate: log.log_date,
+        label: date.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        }),
+        bmi: calculateBmi(Number(log.weight_kg || 0), heightCm) ?? 0,
+      };
+    })
+    .filter((point) => point.bmi > 0);
+}
+
+export function getBmiChartView(logs: BodyweightLog[], chartRange: ChartRange, heightCm: number | null) {
+  const rangeDays = CHART_DAYS_BY_RANGE[chartRange];
+  const rangeStartIso = getLocalIsoDateDaysAgo(rangeDays - 1);
+  if (!(heightCm && heightCm > 0)) {
+    return { chartData: [] as BmiChartPoint[], yMin: 16, yMax: 34, yTicks: [16, 20, 24, 28, 32, 34], rangeStartIso };
+  }
+
+  const fullChartData = buildFullBmiChartData(logs, heightCm);
+  const chartData = fullChartData.filter((point) => point.logDate >= rangeStartIso);
+  const chartValues = chartData.map((d) => d.bmi);
+  const minBmi = chartValues.length ? Math.min(...chartValues) : 0;
+  const maxBmi = chartValues.length ? Math.max(...chartValues) : 0;
+  const minSpan = 2;
+  const basePadding = 0.8;
+  const tickStep = 1;
+  const span = Math.max(maxBmi - minBmi, minSpan);
+  const yMinRaw = minBmi - basePadding - (span === minSpan ? minSpan / 2 : 0);
+  const yMaxRaw = maxBmi + basePadding + (span === minSpan ? minSpan / 2 : 0);
+  const yMin = Math.max(10, Math.floor(yMinRaw / tickStep) * tickStep);
+  const yMax = Math.max(yMin + 4, Math.ceil(yMaxRaw / tickStep) * tickStep);
   const yTicks = Array.from(
     { length: Math.floor((yMax - yMin) / tickStep) + 1 },
     (_, index) => Number((yMin + index * tickStep).toFixed(1))

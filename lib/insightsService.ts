@@ -22,7 +22,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
 
   const { user, userId } = authState;
 
-  const [bodyweightRes, caloriesRes, metabolicRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
+  const [bodyweightRes, caloriesRes, metabolicRes, dailyEnergyRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
     supabase
       .from(TABLES.bodyweightLogs)
       .select("log_date,weight_input,unit_input,weight_kg")
@@ -36,6 +36,11 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
     supabase
       .from(TABLES.metabolicActivityLogs)
       .select("log_date,estimated_kcal_spent")
+      .eq("user_id", userId)
+      .order("log_date", { ascending: true }),
+    supabase
+      .from(TABLES.dailyEnergyMetrics)
+      .select("log_date,maintenance_kcal_for_day")
       .eq("user_id", userId)
       .order("log_date", { ascending: true }),
     supabase
@@ -54,7 +59,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
       .eq("user_id", userId),
     supabase
       .from(TABLES.profiles)
-      .select("first_name")
+      .select("first_name,height_cm")
       .eq("user_id", userId)
       .maybeSingle(),
   ]);
@@ -63,6 +68,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
     bodyweightRes.error ||
     caloriesRes.error ||
     metabolicRes.error ||
+    dailyEnergyRes.error ||
     workoutSetsRes.error ||
     workoutSessionsRes.error ||
     exercisesRes.error
@@ -73,6 +79,7 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
         bodyweightRes.error?.message ||
         caloriesRes.error?.message ||
         metabolicRes.error?.message ||
+        dailyEnergyRes.error?.message ||
         workoutSetsRes.error?.message ||
         workoutSessionsRes.error?.message ||
         exercisesRes.error?.message ||
@@ -106,6 +113,16 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
     date: row.log_date,
     value: Number(row.estimated_kcal_spent),
   }));
+
+  const maintenanceSeries: InsightMetricPoint[] = ((dailyEnergyRes.data ?? []) as Array<{
+    log_date: string;
+    maintenance_kcal_for_day: number | null;
+  }>)
+    .filter((row) => row.maintenance_kcal_for_day != null)
+    .map((row) => ({
+      date: row.log_date,
+      value: Number(row.maintenance_kcal_for_day),
+    }));
 
   const intakeByDate = new Map(caloriesSeries.map((point) => [point.date, point.value]));
   const spendByDate = new Map(metabolicActivitySeries.map((point) => [point.date, point.value]));
@@ -170,15 +187,24 @@ export async function loadInsightsData(): Promise<InsightsLoadResult> {
     strengthSeries,
   });
   const firstName = profileRes.error ? null : ((profileRes.data?.first_name as string | null | undefined) ?? null);
+  const profileHeightCm = profileRes.error
+    ? null
+    : (
+      profileRes.data?.height_cm != null
+        ? Number(profileRes.data.height_cm)
+        : null
+    );
 
   return {
     status: "ok",
     data: {
       email: user.email ?? "Athlete",
       firstName,
+      profileHeightCm,
       ...insights,
       bodyweightSeries,
       caloriesSeries,
+      maintenanceSeries,
       metabolicActivitySeries,
       netEnergySeries,
       strengthSeries,

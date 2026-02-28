@@ -2,6 +2,21 @@ import { supabase } from "@/lib/supabaseClient";
 import { TABLES } from "@/lib/dbNames";
 import { getCurrentUserIdFromSession } from "@/lib/authSession";
 import type { MetabolicActivityLog, PendingBurnOverwrite } from "@/features/calories/burn/types";
+import { refreshEnergyMetricsAfterWrite } from "@/lib/dailyEnergyMetrics";
+
+async function getExistingBurnLogDateSafe(userId: string, logId: string | number) {
+  try {
+    const { data } = await supabase
+      .from(TABLES.metabolicActivityLogs)
+      .select("log_date")
+      .eq("id", String(logId))
+      .eq("user_id", userId)
+      .maybeSingle();
+    return data?.log_date ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_BURN_LOG_FETCH_LIMIT = 400;
 
@@ -39,6 +54,10 @@ export async function loadBurnLogsForCurrentUser(options?: { limit?: number }): 
 }
 
 export async function upsertBurnEntry(payload: PendingBurnOverwrite): Promise<string | null> {
+  if (!Number.isFinite(payload.estimatedKcalSpent) || payload.estimatedKcalSpent < 0) {
+    return "Active calories must be 0 or greater.";
+  }
+
   const { error } = await supabase
     .from(TABLES.metabolicActivityLogs)
     .upsert(
@@ -51,7 +70,13 @@ export async function upsertBurnEntry(payload: PendingBurnOverwrite): Promise<st
       { onConflict: "user_id,log_date" }
     );
 
-  return error ? error.message : null;
+  if (error) return error.message;
+  await refreshEnergyMetricsAfterWrite({
+    source: "calories_burn",
+    userId: payload.userId,
+    touchedDates: [payload.logDate],
+  });
+  return null;
 }
 
 export async function getBurnLogForDate(
@@ -90,6 +115,8 @@ export async function deleteBurnLogForCurrentUser(
     return { deleted: false, error: "Not logged in." };
   }
 
+  const existingLogDate = await getExistingBurnLogDateSafe(userId, logId);
+
   const { error } = await supabase
     .from(TABLES.metabolicActivityLogs)
     .delete()
@@ -100,6 +127,13 @@ export async function deleteBurnLogForCurrentUser(
     return { deleted: false, error: error.message };
   }
 
+  if (existingLogDate) {
+    await refreshEnergyMetricsAfterWrite({
+      source: "calories_burn",
+      userId,
+      touchedDates: [existingLogDate],
+    });
+  }
   return { deleted: true, error: null };
 }
 
@@ -120,6 +154,12 @@ export async function updateBurnLogForCurrentUser(
     return "Not logged in.";
   }
 
+  if (!Number.isFinite(payload.estimatedKcalSpent) || payload.estimatedKcalSpent < 0) {
+    return "Active calories must be 0 or greater.";
+  }
+
+  const existingLogDate = await getExistingBurnLogDateSafe(userId, logId);
+
   const { error } = await supabase
     .from(TABLES.metabolicActivityLogs)
     .update({
@@ -130,5 +170,15 @@ export async function updateBurnLogForCurrentUser(
     .eq("id", String(logId))
     .eq("user_id", userId);
 
-  return error ? error.message : null;
+  if (error) return error.message;
+
+  const touchedDates = existingLogDate && existingLogDate !== payload.logDate
+    ? [existingLogDate, payload.logDate]
+    : [payload.logDate];
+  await refreshEnergyMetricsAfterWrite({
+    source: "calories_burn",
+    userId,
+    touchedDates,
+  });
+  return null;
 }

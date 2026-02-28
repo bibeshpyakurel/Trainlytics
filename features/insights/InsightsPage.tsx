@@ -3,10 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Area,
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
+  ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,7 +20,7 @@ import {
 import { loadInsightsData } from "@/lib/insightsService";
 import { buildInsightsView } from "@/lib/insightsView";
 import type { InsightMetricPoint, InsightsData } from "@/lib/insightsTypes";
-import { LB_PER_KG } from "@/lib/convertWeight";
+import { calculateBmi } from "@/lib/energyCalculations";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { API_ROUTES, ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 
@@ -50,39 +55,11 @@ const RANGE_OPTIONS = [
 ] as const;
 
 type RangeOptionId = (typeof RANGE_OPTIONS)[number]["id"];
+type EnergyBreakdownRangeId = "biweekly" | "1m" | "3m" | "6m" | "1y";
 
-type MetricId = "weight" | "calories" | "spend" | "net" | "strength";
-
-type TrendMetricConfig = {
-  id: MetricId;
-  label: string;
-  unit: string;
-  targetLogsPerWeek: number;
-};
-
-type DrilldownEntry = {
-  date: string;
-  value: string;
-  note?: string;
-};
-
-type DrilldownState = {
-  title: string;
-  subtitle: string;
-  entries: DrilldownEntry[];
-};
-
-type ChartMode = "raw" | "index";
-type CoachingItem = { id: string; message: string };
+type TopVisualTab = "weight_net_overlay" | "maintenance_intake_burn" | "bmi_trend" | "active_burn_consistency";
+type BottomVisualTab = "strength_weight_change" | "weekday_pattern" | "fat_signal_14d" | "forecast_14d";
 type PersistedThread = { messages: AssistantMessage[] };
-
-const TREND_METRICS: TrendMetricConfig[] = [
-  { id: "weight", label: "Bodyweight", unit: "kg", targetLogsPerWeek: 4 },
-  { id: "calories", label: "Calories", unit: "kcal", targetLogsPerWeek: 5 },
-  { id: "spend", label: "Estimated Burn", unit: "kcal", targetLogsPerWeek: 5 },
-  { id: "net", label: "Net Energy", unit: "kcal", targetLogsPerWeek: 4 },
-  { id: "strength", label: "Strength", unit: "score", targetLogsPerWeek: 3 },
-];
 
 const VOICE_RESTART_DELAY_MS = 180;
 const FOLLOW_UP_SOURCE_MAX_CHARS = 1_200;
@@ -105,6 +82,14 @@ const ASSISTANT_OUTPUT_MODE_STORAGE_KEY = "insights_assistant_output_mode";
 const ASSISTANT_OUTPUT_MODE_OPTIONS: Array<{ id: AssistantOutputMode; label: string }> = [
   { id: "default", label: "Default" },
   { id: "fitness_structured", label: "Fitness Structured" },
+];
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const ENERGY_BREAKDOWN_RANGE_OPTIONS: Array<{ id: EnergyBreakdownRangeId; label: string; days: number }> = [
+  { id: "biweekly", label: "Biweekly", days: 14 },
+  { id: "1m", label: "1M", days: 30 },
+  { id: "3m", label: "3M", days: 90 },
+  { id: "6m", label: "6M", days: 180 },
+  { id: "1y", label: "1Y", days: 365 },
 ];
 
 function filterSeriesByRange(series: InsightMetricPoint[], days: number | null): InsightMetricPoint[] {
@@ -141,17 +126,6 @@ function parseIsoDate(dateIso: string) {
   return startOfDay(new Date(`${dateIso}T00:00:00`));
 }
 
-function formatValue(value: number, metric: TrendMetricConfig) {
-  if (metric.id === "calories") return `${Math.round(value)} ${metric.unit}`;
-  return `${value.toFixed(1)} ${metric.unit}`;
-}
-
-function formatDeltaPercent(deltaPct: number | null) {
-  if (deltaPct == null) return "Not enough data";
-  const sign = deltaPct > 0 ? "+" : "";
-  return `${sign}${(deltaPct * 100).toFixed(1)}%`;
-}
-
 function computeRollingAverageByDate(series: InsightMetricPoint[], windowDays = 7) {
   const sorted = [...series].sort((a, b) => a.date.localeCompare(b.date));
   return sorted.map((point) => {
@@ -174,127 +148,6 @@ function computeRollingAverageByDate(series: InsightMetricPoint[], windowDays = 
       sampleSize: windowValues.length,
     };
   });
-}
-
-function computeWeekOverWeekDelta(series: InsightMetricPoint[]) {
-  const sorted = [...series].sort((a, b) => a.date.localeCompare(b.date));
-  if (sorted.length === 0) {
-    return { deltaPct: null as number | null, recentSample: 0, priorSample: 0 };
-  }
-
-  const latestDate = parseIsoDate(sorted[sorted.length - 1].date);
-  const recentStart = addDays(latestDate, -6);
-  const priorStart = addDays(latestDate, -13);
-  const priorEnd = addDays(latestDate, -7);
-
-  const recentValues = sorted
-    .filter((point) => {
-      const date = parseIsoDate(point.date);
-      return date >= recentStart && date <= latestDate;
-    })
-    .map((point) => point.value);
-  const priorValues = sorted
-    .filter((point) => {
-      const date = parseIsoDate(point.date);
-      return date >= priorStart && date <= priorEnd;
-    })
-    .map((point) => point.value);
-
-  if (recentValues.length < 2 || priorValues.length < 2) {
-    return { deltaPct: null as number | null, recentSample: recentValues.length, priorSample: priorValues.length };
-  }
-
-  const recentAvg = recentValues.reduce((sum, value) => sum + value, 0) / recentValues.length;
-  const priorAvg = priorValues.reduce((sum, value) => sum + value, 0) / priorValues.length;
-  if (priorAvg === 0) {
-    return { deltaPct: null as number | null, recentSample: recentValues.length, priorSample: priorValues.length };
-  }
-
-  return {
-    deltaPct: (recentAvg - priorAvg) / priorAvg,
-    recentSample: recentValues.length,
-    priorSample: priorValues.length,
-  };
-}
-
-function resolveAdherenceWindowDays(metricSeries: InsightMetricPoint[], selectedRangeDays: number | null) {
-  if (selectedRangeDays != null) return selectedRangeDays;
-  if (metricSeries.length < 2) return 7;
-
-  const sorted = [...metricSeries].sort((a, b) => a.date.localeCompare(b.date));
-  const firstDate = parseIsoDate(sorted[0].date);
-  const lastDate = parseIsoDate(sorted[sorted.length - 1].date);
-  const spanDays = Math.floor((lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-  return Math.max(7, spanDays);
-}
-
-function getCorrelationConfidence(overlapDays: number) {
-  if (overlapDays >= 15) {
-    return {
-      label: "High confidence",
-      detail: `n=${overlapDays} overlap days (15+ days)`,
-      className: "border-emerald-400/40 bg-emerald-500/10 text-emerald-300",
-    };
-  }
-  if (overlapDays >= 7) {
-    return {
-      label: "Medium confidence",
-      detail: `n=${overlapDays} overlap days (7-14 days)`,
-      className: "border-amber-400/40 bg-amber-500/10 text-amber-300",
-    };
-  }
-  if (overlapDays >= 3) {
-    return {
-      label: "Low confidence",
-      detail: `n=${overlapDays} overlap days (3-6 days)`,
-      className: "border-orange-400/40 bg-orange-500/10 text-orange-300",
-    };
-  }
-
-  return {
-    label: "Insufficient data",
-    detail: `n=${overlapDays} overlap days (need at least 3)`,
-    className: "border-zinc-600/70 bg-zinc-800/60 text-zinc-300",
-  };
-}
-
-function formatEntryDate(dateIso: string) {
-  return new Date(`${dateIso}T00:00:00`).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function countOverlapDays(left: InsightMetricPoint[], right: InsightMetricPoint[]) {
-  const rightDates = new Set(right.map((point) => point.date));
-  return left.reduce((count, point) => (rightDates.has(point.date) ? count + 1 : count), 0);
-}
-
-function countLaggedOverlapDays(
-  left: InsightMetricPoint[],
-  right: InsightMetricPoint[],
-  lagDays: number
-) {
-  const shiftedRightDates = new Set(
-    right.map((point) => {
-      const shiftedDate = addDays(parseIsoDate(point.date), -lagDays);
-      const year = shiftedDate.getFullYear();
-      const month = String(shiftedDate.getMonth() + 1).padStart(2, "0");
-      const day = String(shiftedDate.getDate()).padStart(2, "0");
-      return `${year}-${month}-${day}`;
-    })
-  );
-  return left.reduce((count, point) => (shiftedRightDates.has(point.date) ? count + 1 : count), 0);
-}
-
-function countPresenceSpanDays(left: InsightMetricPoint[], right: InsightMetricPoint[]) {
-  if (left.length === 0 || right.length === 0) return 0;
-  const allDates = [...left, ...right].map((point) => point.date).sort();
-  if (allDates.length === 0) return 0;
-  const start = parseIsoDate(allDates[0]);
-  const end = parseIsoDate(allDates[allDates.length - 1]);
-  return Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 }
 
 function getLastUserMessageIndex(messages: AssistantMessage[]) {
@@ -383,7 +236,7 @@ function splitAssistantSections(text: string): AssistantSection[] | null {
 
 export default function InsightsPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [data, setData] = useState<InsightsData | null>(null);
   const [question, setQuestion] = useState("");
@@ -398,8 +251,9 @@ export default function InsightsPage() {
   const [isListening, setIsListening] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(false);
   const [selectedRange, setSelectedRange] = useState<RangeOptionId>("7d");
-  const [drilldown, setDrilldown] = useState<DrilldownState | null>(null);
-  const [chartMode, setChartMode] = useState<ChartMode>("index");
+  const [energyBreakdownRange, setEnergyBreakdownRange] = useState<EnergyBreakdownRangeId>("biweekly");
+  const [topVisualTab, setTopVisualTab] = useState<TopVisualTab>("weight_net_overlay");
+  const [bottomVisualTab, setBottomVisualTab] = useState<BottomVisualTab>("strength_weight_change");
   const [threadHydrated, setThreadHydrated] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const speechFrameRef = useRef<number | null>(null);
@@ -547,6 +401,7 @@ export default function InsightsPage() {
     return {
       bodyweightSeries: filterSeriesByRange(data?.bodyweightSeries ?? [], selectedRangeConfig.days),
       caloriesSeries: filterSeriesByRange(data?.caloriesSeries ?? [], selectedRangeConfig.days),
+      maintenanceSeries: filterSeriesByRange(data?.maintenanceSeries ?? [], selectedRangeConfig.days),
       metabolicActivitySeries: filterSeriesByRange(data?.metabolicActivitySeries ?? [], selectedRangeConfig.days),
       netEnergySeries: filterSeriesByRange(data?.netEnergySeries ?? [], selectedRangeConfig.days),
       strengthSeries: filterSeriesByRange(data?.strengthSeries ?? [], selectedRangeConfig.days),
@@ -568,136 +423,6 @@ export default function InsightsPage() {
       }
     );
   }, [filteredSeries, selectedRangeConfig.days, selectedRangeConfig.label]);
-
-  const trendDecomposition = useMemo(() => {
-    const seriesByMetric: Record<MetricId, InsightMetricPoint[]> = {
-      weight: filteredSeries.bodyweightSeries,
-      calories: filteredSeries.caloriesSeries,
-      spend: filteredSeries.metabolicActivitySeries,
-      net: filteredSeries.netEnergySeries,
-      strength: filteredSeries.strengthSeries,
-    };
-
-    const metricRows = TREND_METRICS.map((metric) => {
-      const series = seriesByMetric[metric.id];
-      const rolling = computeRollingAverageByDate(series, 7);
-      const latestRolling = rolling.at(-1) ?? null;
-      const wow = computeWeekOverWeekDelta(series);
-      const windowDays = resolveAdherenceWindowDays(series, selectedRangeConfig.days);
-      const expectedLogs = Math.max(1, Math.round((windowDays / 7) * metric.targetLogsPerWeek));
-      const actualLogs = series.length;
-      const adherenceScore = Math.min(100, Math.round((actualLogs / expectedLogs) * 100));
-
-      return {
-        metric,
-        latestRolling,
-        wow,
-        actualLogs,
-        expectedLogs,
-        adherenceScore,
-        windowDays,
-      };
-    });
-
-    const overallAdherence = Math.round(
-      metricRows.reduce((sum, row) => sum + row.adherenceScore, 0) / metricRows.length
-    );
-
-    return {
-      metricRows,
-      overallAdherence,
-    };
-  }, [filteredSeries, selectedRangeConfig.days]);
-
-  const coachingItems = useMemo<CoachingItem[]>(() => {
-    const items: CoachingItem[] = [];
-    const rangeText = selectedRangeConfig.label === "All" ? "all time" : `the last ${selectedRangeConfig.label}`;
-
-    if (filteredSeries.bodyweightSeries.length === 0) {
-      items.push({
-        id: "weight-start",
-        message: `You need 1 bodyweight log to unlock weight trend insights for ${rangeText}.`,
-      });
-    }
-    if (filteredSeries.caloriesSeries.length === 0) {
-      items.push({
-        id: "calories-start",
-        message: `You need 1 calories log to unlock fueling insights for ${rangeText}.`,
-      });
-    }
-    if (filteredSeries.metabolicActivitySeries.length === 0) {
-      items.push({
-        id: "burn-start",
-        message: `You need 1 burn log to unlock energy-spend insights for ${rangeText}.`,
-      });
-    }
-    if (filteredSeries.strengthSeries.length === 0) {
-      items.push({
-        id: "strength-start",
-        message: `You need 1 workout strength log to unlock performance insights for ${rangeText}.`,
-      });
-    }
-
-    const caloriesStrengthOverlap = countOverlapDays(filteredSeries.caloriesSeries, filteredSeries.strengthSeries);
-    const netLag3Overlap = countLaggedOverlapDays(filteredSeries.netEnergySeries, filteredSeries.bodyweightSeries, 3);
-    const netLag7Overlap = countLaggedOverlapDays(filteredSeries.netEnergySeries, filteredSeries.bodyweightSeries, 7);
-    const strengthWeightOverlap = countOverlapDays(filteredSeries.strengthSeries, filteredSeries.bodyweightSeries);
-    const spendConsistencyOverlap = countPresenceSpanDays(filteredSeries.metabolicActivitySeries, filteredSeries.strengthSeries);
-
-    const missingCaloriesStrength = Math.max(0, 3 - caloriesStrengthOverlap);
-    if (missingCaloriesStrength > 0) {
-      items.push({
-        id: "corr-cal-strength",
-        message: `You need ${missingCaloriesStrength} more overlapping calories + strength day${missingCaloriesStrength === 1 ? "" : "s"} to unlock reliable calories-strength correlation.`,
-      });
-    }
-
-    const missingNetLag3 = Math.max(0, 3 - netLag3Overlap);
-    if (missingNetLag3 > 0) {
-      items.push({
-        id: "corr-net-weight-lag3",
-        message: `You need ${missingNetLag3} more overlap day${missingNetLag3 === 1 ? "" : "s"} to unlock net-energy (lag 3d) vs bodyweight correlation.`,
-      });
-    }
-
-    const missingNetLag7 = Math.max(0, 3 - netLag7Overlap);
-    if (missingNetLag7 > 0) {
-      items.push({
-        id: "corr-net-weight-lag7",
-        message: `You need ${missingNetLag7} more overlap day${missingNetLag7 === 1 ? "" : "s"} to unlock net-energy (lag 7d) vs bodyweight correlation.`,
-      });
-    }
-
-    const missingStrengthWeight = Math.max(0, 3 - strengthWeightOverlap);
-    if (missingStrengthWeight > 0) {
-      items.push({
-        id: "corr-strength-weight",
-        message: `You need ${missingStrengthWeight} more overlapping strength + bodyweight day${missingStrengthWeight === 1 ? "" : "s"} to unlock strength-bodyweight correlation.`,
-      });
-    }
-
-    const missingSpendConsistency = Math.max(0, 3 - spendConsistencyOverlap);
-    if (missingSpendConsistency > 0) {
-      items.push({
-        id: "corr-spend-consistency",
-        message: `You need ${missingSpendConsistency} more day${missingSpendConsistency === 1 ? "" : "s"} of burn/workout logging span to unlock spend-consistency vs workout-consistency correlation.`,
-      });
-    }
-
-    for (const row of trendDecomposition.metricRows) {
-      const missingRecent = Math.max(0, 2 - row.wow.recentSample);
-      const missingPrior = Math.max(0, 2 - row.wow.priorSample);
-      const missingWoW = missingRecent + missingPrior;
-      if (missingWoW > 0) {
-        items.push({
-          id: `wow-${row.metric.id}`,
-          message: `You need ${missingWoW} more ${row.metric.label.toLowerCase()} log${missingWoW === 1 ? "" : "s"} to unlock week-over-week delta for ${row.metric.label}.`,
-        });
-      }
-    }
-
-    return items.slice(0, 5);
-  }, [filteredSeries, trendDecomposition.metricRows, selectedRangeConfig.label]);
 
   const mergedTrendData = useMemo(() => {
     const byDate = new Map<string, { date: string; label: string; weightKg?: number; calories?: number; spend?: number; net?: number; strength?: number }>();
@@ -740,29 +465,396 @@ export default function InsightsPage() {
     return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
   }, [filteredSeries]);
 
-  const indexedTrendData = useMemo(() => {
-    function toIndexSeries(values: Array<number | undefined>) {
-      const base = values.find((value) => value != null && Number.isFinite(value));
-      return values.map((value) => {
-        if (value == null || !Number.isFinite(value) || base == null || base === 0) return undefined;
-        return (value / base) * 100;
+  const weightVsNetOverlayData = useMemo(() => {
+    const netRolling7 = computeRollingAverageByDate(filteredSeries.netEnergySeries, 7);
+    const netRollingByDate = new Map<string, number>();
+    const netRollingShiftedByDate = new Map<string, number>();
+    for (const point of netRolling7) {
+      const value = point.value;
+      if (point.sampleSize < 3 || value == null) continue;
+      netRollingByDate.set(point.date, value);
+      const shiftedDate = addDays(parseIsoDate(point.date), 3)
+        .toISOString()
+        .slice(0, 10);
+      netRollingShiftedByDate.set(shiftedDate, value);
+    }
+
+    const byDate = new Map<
+      string,
+      {
+        date: string;
+        label: string;
+        weightKg?: number;
+        net7d?: number;
+        net7dLag3?: number;
+      }
+    >();
+
+    for (const point of filteredSeries.bodyweightSeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        weightKg: point.value,
       });
     }
 
-    const weightIndex = toIndexSeries(mergedTrendData.map((row) => row.weightKg));
-    const caloriesIndex = toIndexSeries(mergedTrendData.map((row) => row.calories));
-    const spendIndex = toIndexSeries(mergedTrendData.map((row) => row.spend));
-    const netIndex = toIndexSeries(mergedTrendData.map((row) => row.net));
-    const strengthIndex = toIndexSeries(mergedTrendData.map((row) => row.strength));
+    for (const [date, value] of netRollingByDate.entries()) {
+      byDate.set(date, {
+        ...(byDate.get(date) ?? { date, label: toChartLabel(date) }),
+        net7d: value,
+      });
+    }
 
-    return mergedTrendData.map((row, idx) => ({
-      ...row,
-      weightIdx: weightIndex[idx],
-      caloriesIdx: caloriesIndex[idx],
-      spendIdx: spendIndex[idx],
-      netIdx: netIndex[idx],
-      strengthIdx: strengthIndex[idx],
+    for (const [date, value] of netRollingShiftedByDate.entries()) {
+      byDate.set(date, {
+        ...(byDate.get(date) ?? { date, label: toChartLabel(date) }),
+        net7dLag3: value,
+      });
+    }
+
+    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [filteredSeries.bodyweightSeries, filteredSeries.netEnergySeries]);
+
+  const maintenanceVsIntakeVsBurnData = useMemo(() => {
+    const byDate = new Map<
+      string,
+      { date: string; label: string; intake?: number; maintenance?: number; activeBurn?: number }
+    >();
+
+    for (const point of filteredSeries.caloriesSeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        intake: point.value,
+      });
+    }
+    for (const point of filteredSeries.maintenanceSeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        maintenance: point.value,
+      });
+    }
+    for (const point of filteredSeries.metabolicActivitySeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        activeBurn: point.value,
+      });
+    }
+
+    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [
+    filteredSeries.caloriesSeries,
+    filteredSeries.maintenanceSeries,
+    filteredSeries.metabolicActivitySeries,
+  ]);
+
+  const bmiTrendData = useMemo(() => {
+    const heightCm = data?.profileHeightCm ?? null;
+    if (!(heightCm && heightCm > 0)) {
+      return [] as Array<{ date: string; label: string; bmi: number }>;
+    }
+
+    return filteredSeries.bodyweightSeries
+      .map((point) => {
+        const bmi = calculateBmi(point.value, heightCm);
+        return {
+          date: point.date,
+          label: toChartLabel(point.date),
+          bmi: bmi ?? NaN,
+        };
+      })
+      .filter((point) => Number.isFinite(point.bmi))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [filteredSeries.bodyweightSeries, data?.profileHeightCm]);
+
+  const bmiYAxisDomain = useMemo<[number, number]>(() => {
+    if (bmiTrendData.length === 0) return [15, 35];
+    const values = bmiTrendData.map((point) => point.bmi);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const yMin = Math.max(10, Math.floor((min - 1) * 10) / 10);
+    const yMax = Math.min(60, Math.ceil((max + 1) * 10) / 10);
+    return [yMin, Math.max(yMax, yMin + 4)];
+  }, [bmiTrendData]);
+
+  const activeBurnConsistencyWeeklyData = useMemo(() => {
+    const weekly = new Map<string, { weekStart: string; loggedDays: number; totalBurn: number }>();
+
+    for (const point of filteredSeries.metabolicActivitySeries) {
+      const pointDate = parseIsoDate(point.date);
+      const weekStartDate = addDays(pointDate, -pointDate.getDay());
+      const weekStart = weekStartDate.toISOString().slice(0, 10);
+      const current = weekly.get(weekStart) ?? { weekStart, loggedDays: 0, totalBurn: 0 };
+      current.loggedDays += 1;
+      current.totalBurn += point.value;
+      weekly.set(weekStart, current);
+    }
+
+    return Array.from(weekly.values())
+      .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+      .map((row) => {
+        const consistencyScore = Math.round((row.loggedDays / 7) * 100);
+        const avgActiveBurn = row.loggedDays > 0 ? row.totalBurn / row.loggedDays : null;
+        return {
+          ...row,
+          label: toChartLabel(row.weekStart),
+          consistencyScore,
+          avgActiveBurn,
+        };
+      });
+  }, [filteredSeries.metabolicActivitySeries]);
+
+  const strengthVsWeightChangeData = useMemo(() => {
+    const byDate = new Map<string, { date: string; label: string; strength?: number; weightKg?: number }>();
+    for (const point of filteredSeries.strengthSeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        strength: point.value,
+      });
+    }
+    for (const point of filteredSeries.bodyweightSeries) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        weightKg: point.value,
+      });
+    }
+
+    const rows = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+    const baseStrength = rows.find((row) => row.strength != null && Number.isFinite(row.strength))?.strength ?? null;
+    const baseWeight = rows.find((row) => row.weightKg != null && Number.isFinite(row.weightKg))?.weightKg ?? null;
+
+    return rows.map((row) => {
+      const strengthGrowthPct = row.strength != null && baseStrength != null && baseStrength > 0
+        ? ((row.strength - baseStrength) / baseStrength) * 100
+        : undefined;
+      const weightChangeKg = row.weightKg != null && baseWeight != null
+        ? row.weightKg - baseWeight
+        : undefined;
+      return {
+        ...row,
+        strengthGrowthPct,
+        weightChangeKg,
+      };
+    });
+  }, [filteredSeries.strengthSeries, filteredSeries.bodyweightSeries]);
+
+  const weekdayPerformanceData = useMemo(() => {
+    const base = WEEKDAY_LABELS.map((weekday, index) => ({
+      weekday,
+      index,
+      intakeTotal: 0,
+      intakeCount: 0,
+      burnTotal: 0,
+      burnCount: 0,
+      netTotal: 0,
+      netCount: 0,
+      strengthTotal: 0,
+      strengthCount: 0,
     }));
+
+    function weekdayIndexFromIso(dateIso: string) {
+      return new Date(`${dateIso}T00:00:00`).getDay();
+    }
+
+    for (const point of filteredSeries.caloriesSeries) {
+      const idx = weekdayIndexFromIso(point.date);
+      if (!Number.isFinite(idx)) continue;
+      base[idx].intakeTotal += point.value;
+      base[idx].intakeCount += 1;
+    }
+    for (const point of filteredSeries.metabolicActivitySeries) {
+      const idx = weekdayIndexFromIso(point.date);
+      if (!Number.isFinite(idx)) continue;
+      base[idx].burnTotal += point.value;
+      base[idx].burnCount += 1;
+    }
+    for (const point of filteredSeries.netEnergySeries) {
+      const idx = weekdayIndexFromIso(point.date);
+      if (!Number.isFinite(idx)) continue;
+      base[idx].netTotal += point.value;
+      base[idx].netCount += 1;
+    }
+    for (const point of filteredSeries.strengthSeries) {
+      const idx = weekdayIndexFromIso(point.date);
+      if (!Number.isFinite(idx)) continue;
+      base[idx].strengthTotal += point.value;
+      base[idx].strengthCount += 1;
+    }
+
+    return base.map((row) => ({
+      weekday: row.weekday,
+      avgIntake: row.intakeCount > 0 ? row.intakeTotal / row.intakeCount : null,
+      avgBurn: row.burnCount > 0 ? row.burnTotal / row.burnCount : null,
+      avgNet: row.netCount > 0 ? row.netTotal / row.netCount : null,
+      avgStrength: row.strengthCount > 0 ? row.strengthTotal / row.strengthCount : null,
+      intakeCount: row.intakeCount,
+      burnCount: row.burnCount,
+      netCount: row.netCount,
+      strengthCount: row.strengthCount,
+    }));
+  }, [
+    filteredSeries.caloriesSeries,
+    filteredSeries.metabolicActivitySeries,
+    filteredSeries.netEnergySeries,
+    filteredSeries.strengthSeries,
+  ]);
+
+  const fatSignal14DayData = useMemo(() => {
+    const sorted = [...mergedTrendData].sort((a, b) => a.date.localeCompare(b.date));
+    const rawSignal: Array<{ date: string; label: string; projected14dKg: number }> = [];
+
+    for (const row of sorted) {
+      const endDate = parseIsoDate(row.date);
+      const startDate = addDays(endDate, -13);
+      const windowRows = sorted.filter((entry) => {
+        const entryDate = parseIsoDate(entry.date);
+        return entryDate >= startDate && entryDate <= endDate;
+      });
+
+      const netValues = windowRows
+        .map((entry) => entry.net)
+        .filter((value): value is number => value != null && Number.isFinite(value));
+      if (netValues.length < 5) continue;
+
+      const netAvg = netValues.reduce((sum, value) => sum + value, 0) / netValues.length;
+      const netProjectedDailyKg = netAvg / 7700;
+
+      const weightRows = windowRows
+        .filter((entry) => entry.weightKg != null && Number.isFinite(entry.weightKg))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      let observedDailyKg = 0;
+      if (weightRows.length >= 2) {
+        const first = weightRows[0];
+        const last = weightRows[weightRows.length - 1];
+        const days =
+          (parseIsoDate(last.date).getTime() - parseIsoDate(first.date).getTime()) /
+          (1000 * 60 * 60 * 24);
+        if (days > 0 && first.weightKg != null && last.weightKg != null) {
+          observedDailyKg = (last.weightKg - first.weightKg) / days;
+        }
+      }
+
+      // Blend expected energy-driven change with observed direction to avoid noisy jumps.
+      const blendedDailyKg = (netProjectedDailyKg * 0.65) + (observedDailyKg * 0.35);
+      rawSignal.push({
+        date: row.date,
+        label: row.label,
+        projected14dKg: blendedDailyKg * 14,
+      });
+    }
+
+    if (rawSignal.length === 0) return [];
+
+    const alpha = 0.35;
+    let prev = rawSignal[0].projected14dKg;
+    return rawSignal.map((point, index) => {
+      const smoothed = index === 0 ? point.projected14dKg : (alpha * point.projected14dKg) + ((1 - alpha) * prev);
+      prev = smoothed;
+      return {
+        ...point,
+        smoothedProjected14dKg: smoothed,
+      };
+    });
+  }, [mergedTrendData]);
+
+  const weightForecast14DayData = useMemo(() => {
+    const sorted = [...mergedTrendData]
+      .filter((row) => row.weightKg != null && Number.isFinite(row.weightKg))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (sorted.length < 4) return [] as Array<{
+      date: string;
+      label: string;
+      actualWeightKg: number | null;
+      forecastWeightKg: number | null;
+      forecastLowKg: number | null;
+      forecastRangeKg: number | null;
+      isForecast: boolean;
+    }>;
+
+    const latest = sorted[sorted.length - 1];
+    const latestDate = parseIsoDate(latest.date);
+    const latestWeightKg = latest.weightKg ?? null;
+    if (latestWeightKg == null) return [];
+
+    const recentWindowStart = addDays(latestDate, -13);
+    const recentRows = mergedTrendData
+      .filter((row) => {
+        const rowDate = parseIsoDate(row.date);
+        return rowDate >= recentWindowStart && rowDate <= latestDate;
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const recentNet = recentRows
+      .map((row) => row.net)
+      .filter((value): value is number => value != null && Number.isFinite(value));
+    const avgRecentNet = recentNet.length >= 4
+      ? recentNet.reduce((sum, value) => sum + value, 0) / recentNet.length
+      : 0;
+    const projectedDailyKgFromNet = avgRecentNet / 7700;
+
+    const recentWeightRows = recentRows
+      .filter((row) => row.weightKg != null && Number.isFinite(row.weightKg))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    let observedDailyKg = 0;
+    if (recentWeightRows.length >= 2) {
+      const first = recentWeightRows[0];
+      const last = recentWeightRows[recentWeightRows.length - 1];
+      const days =
+        (parseIsoDate(last.date).getTime() - parseIsoDate(first.date).getTime()) /
+        (1000 * 60 * 60 * 24);
+      if (days > 0 && first.weightKg != null && last.weightKg != null) {
+        observedDailyKg = (last.weightKg - first.weightKg) / days;
+      }
+    }
+
+    // Weighted blend keeps forecast grounded in both energy balance and observed direction.
+    const blendedDailyKg = (projectedDailyKgFromNet * 0.65) + (observedDailyKg * 0.35);
+
+    const dailyDeltas: number[] = [];
+    for (let index = 1; index < recentWeightRows.length; index += 1) {
+      const prev = recentWeightRows[index - 1];
+      const current = recentWeightRows[index];
+      if (prev.weightKg == null || current.weightKg == null) continue;
+      const days =
+        (parseIsoDate(current.date).getTime() - parseIsoDate(prev.date).getTime()) /
+        (1000 * 60 * 60 * 24);
+      if (days <= 0) continue;
+      dailyDeltas.push((current.weightKg - prev.weightKg) / days);
+    }
+    const volatility = dailyDeltas.length > 0
+      ? Math.sqrt(
+          dailyDeltas.reduce((sum, delta) => sum + (delta * delta), 0) /
+          dailyDeltas.length
+        )
+      : 0.08;
+
+    const history = sorted.slice(-14).map((row) => ({
+      date: row.date,
+      label: toChartLabel(row.date),
+      actualWeightKg: row.weightKg ?? null,
+      forecastWeightKg: null,
+      forecastLowKg: null,
+      forecastRangeKg: null,
+      isForecast: false,
+    }));
+
+    const forecast = Array.from({ length: 14 }, (_, idx) => {
+      const day = idx + 1;
+      const date = addDays(latestDate, day).toISOString().slice(0, 10);
+      const center = latestWeightKg + (blendedDailyKg * day);
+      const halfBand = Math.max(0.15, volatility * Math.sqrt(day) * 1.15);
+      const low = center - halfBand;
+      const high = center + halfBand;
+      return {
+        date,
+        label: toChartLabel(date),
+        actualWeightKg: null,
+        forecastWeightKg: center,
+        forecastLowKg: low,
+        forecastRangeKg: high - low,
+        isForecast: true,
+      };
+    });
+
+    return [...history, ...forecast];
   }, [mergedTrendData]);
 
   const aiContext = useMemo(() => {
@@ -795,6 +887,116 @@ export default function InsightsPage() {
     const lastUserIndex = getLastUserMessageIndex(assistantThread);
     return lastUserIndex >= 0 && lastIndex > lastUserIndex && assistantThread[lastIndex]?.role === "assistant";
   }, [assistantThread, assistantLoading]);
+
+  const weeklyCoachSummary = useMemo(() => {
+    const win = rangeInsights.achievements[0]?.title && rangeInsights.achievements[0]?.detail
+      ? `${rangeInsights.achievements[0].title}: ${rangeInsights.achievements[0].detail}`
+      : "Consistency is building. Keep your current routine steady this week.";
+
+    const risk = rangeInsights.improvements[0] ?? "No major risk detected from current logs.";
+
+    const bestPattern =
+      rangeInsights.correlations
+        .filter((item) => item.value != null)
+        .sort((a, b) => Math.abs(b.value ?? 0) - Math.abs(a.value ?? 0))[0] ?? null;
+    const pattern = bestPattern
+      ? `${bestPattern.label}: ${bestPattern.interpretation}.`
+      : "Pattern signal is still weak. More overlap logs will improve detection.";
+
+    const nextAction = rangeInsights.suggestions[0] ?? "Log weight, intake, burn, and workout today to sharpen tomorrow's guidance.";
+
+    const expectedCounts = {
+      weight: Math.max(3, Math.ceil((selectedRangeConfig.days ?? 30) * 0.4)),
+      calories: Math.max(4, Math.ceil((selectedRangeConfig.days ?? 30) * 0.55)),
+      burn: Math.max(4, Math.ceil((selectedRangeConfig.days ?? 30) * 0.55)),
+      strength: Math.max(2, Math.ceil((selectedRangeConfig.days ?? 30) * 0.25)),
+    };
+    const adherenceRatios = [
+      filteredSeries.bodyweightSeries.length / expectedCounts.weight,
+      filteredSeries.caloriesSeries.length / expectedCounts.calories,
+      filteredSeries.metabolicActivitySeries.length / expectedCounts.burn,
+      filteredSeries.strengthSeries.length / expectedCounts.strength,
+    ];
+    const averageAdherence = adherenceRatios.reduce((sum, value) => sum + value, 0) / adherenceRatios.length;
+    const confidence = averageAdherence >= 1
+      ? "High confidence"
+      : averageAdherence >= 0.65
+        ? "Medium confidence"
+        : "Low confidence";
+    const confidenceDetail = `Data coverage: ${Math.round(Math.min(1.5, averageAdherence) * 100)}% of target logging in ${selectedRangeConfig.label}.`;
+
+    return {
+      win,
+      risk,
+      pattern,
+      nextAction,
+      confidence: `${confidence}. ${confidenceDetail}`,
+    };
+  }, [rangeInsights, filteredSeries, selectedRangeConfig.days, selectedRangeConfig.label]);
+
+  const energyBreakdownChartData = useMemo(() => {
+    const sourceCalories = data?.caloriesSeries ?? [];
+    const sourceMaintenance = data?.maintenanceSeries ?? [];
+    const sourceBurned = data?.metabolicActivitySeries ?? [];
+
+    const byDate = new Map<
+      string,
+      {
+        date: string;
+        label: string;
+        maintenance?: number;
+        totalIntake?: number;
+        caloriesBurned?: number;
+      }
+    >();
+
+    for (const point of sourceMaintenance) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        maintenance: point.value,
+      });
+    }
+    for (const point of sourceCalories) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        totalIntake: point.value,
+      });
+    }
+    for (const point of sourceBurned) {
+      byDate.set(point.date, {
+        ...(byDate.get(point.date) ?? { date: point.date, label: toChartLabel(point.date) }),
+        caloriesBurned: point.value,
+      });
+    }
+
+    const allRows = Array.from(byDate.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => {
+        const calorieDeficit =
+          row.maintenance != null && row.totalIntake != null
+            ? row.maintenance - row.totalIntake
+            : null;
+        const totalCalorieDeficit =
+          calorieDeficit != null && row.caloriesBurned != null
+            ? calorieDeficit + row.caloriesBurned
+            : null;
+        return {
+          ...row,
+          calorieDeficit,
+          totalCalorieDeficit,
+        };
+      });
+
+    const selectedRangeOption =
+      ENERGY_BREAKDOWN_RANGE_OPTIONS.find((option) => option.id === energyBreakdownRange) ??
+      ENERGY_BREAKDOWN_RANGE_OPTIONS[0];
+    const cutoff = startOfDay(addDays(new Date(), -(selectedRangeOption.days - 1)));
+
+    return allRows.filter((row) => {
+      const rowDate = new Date(`${row.date}T00:00:00`);
+      return rowDate >= cutoff;
+    });
+  }, [data?.caloriesSeries, data?.maintenanceSeries, data?.metabolicActivitySeries, energyBreakdownRange]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1304,132 +1506,6 @@ export default function InsightsPage() {
     startVoiceInput();
   }
 
-  function getMetricDrilldownEntries(metric: MetricId): DrilldownEntry[] {
-    if (metric === "weight") {
-      return [...filteredSeries.bodyweightSeries]
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .map((point) => ({
-          date: point.date,
-          value: `${point.value.toFixed(1)} kg`,
-        }));
-    }
-
-    if (metric === "calories") {
-      return [...filteredSeries.caloriesSeries]
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .map((point) => ({
-          date: point.date,
-          value: `${Math.round(point.value)} kcal`,
-        }));
-    }
-
-    if (metric === "spend") {
-      return [...filteredSeries.metabolicActivitySeries]
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .map((point) => ({
-          date: point.date,
-          value: `${Math.round(point.value)} kcal`,
-        }));
-    }
-
-    if (metric === "net") {
-      return [...filteredSeries.netEnergySeries]
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .map((point) => ({
-          date: point.date,
-          value: `${Math.round(point.value)} kcal`,
-        }));
-    }
-
-    return [...filteredSeries.strengthSeries]
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .map((point) => ({
-        date: point.date,
-        value: point.value.toFixed(1),
-      }));
-  }
-
-  function openMetricDrilldown(title: string, metric: MetricId, subtitle: string) {
-    setDrilldown({
-      title,
-      subtitle,
-      entries: getMetricDrilldownEntries(metric),
-    });
-  }
-
-  function openCorrelationDrilldown(label: string) {
-    const byDateLeft = new Map<string, number>();
-    const byDateRight = new Map<string, number>();
-    let leftName = "";
-    let rightName = "";
-
-    if (label === "Calories ↔ Strength") {
-      leftName = "Calories";
-      rightName = "Strength";
-      for (const point of filteredSeries.caloriesSeries) byDateLeft.set(point.date, point.value);
-      for (const point of filteredSeries.strengthSeries) byDateRight.set(point.date, point.value);
-    } else if (label === "Net Energy (lag 3d) ↔ Bodyweight" || label === "Net Energy (lag 7d) ↔ Bodyweight") {
-      leftName = "Net";
-      rightName = "Weight";
-      for (const point of filteredSeries.netEnergySeries) byDateLeft.set(point.date, point.value);
-      for (const point of filteredSeries.bodyweightSeries) byDateRight.set(point.date, point.value);
-    } else if (label === "Spend Consistency ↔ Workout Consistency") {
-      leftName = "Spend logged";
-      rightName = "Workout logged";
-      for (const point of filteredSeries.metabolicActivitySeries) byDateLeft.set(point.date, 1);
-      for (const point of filteredSeries.strengthSeries) byDateRight.set(point.date, 1);
-    } else {
-      leftName = "Strength";
-      rightName = "Weight";
-      for (const point of filteredSeries.strengthSeries) byDateLeft.set(point.date, point.value);
-      for (const point of filteredSeries.bodyweightSeries) byDateRight.set(point.date, point.value);
-    }
-
-    const entries = Array.from(byDateLeft.entries())
-      .filter(([date]) => byDateRight.has(date))
-      .map(([date, leftValue]) => ({
-        date,
-        value: `${leftName}: ${leftName === "Calories" || leftName === "Net" ? Math.round(leftValue) : leftValue.toFixed(1)}`,
-        note: `${rightName}: ${rightName === "Weight" ? byDateRight.get(date)!.toFixed(1) : byDateRight.get(date)!.toFixed(1)}`,
-      }))
-      .sort((a, b) => b.date.localeCompare(a.date));
-
-    setDrilldown({
-      title: label,
-      subtitle: "Overlapping days used in correlation",
-      entries,
-    });
-  }
-
-  function openTextInsightDrilldown(title: string, text: string) {
-    const metric: MetricId | "all" =
-      /bodyweight|weigh/i.test(text) ? "weight" :
-      /calories|fuel/i.test(text) ? "calories" :
-      /burn|metabolic|spend/i.test(text) ? "spend" :
-      /net\s*energy|surplus|deficit/i.test(text) ? "net" :
-      /strength|workout|recovery|deload/i.test(text) ? "strength" :
-      "all";
-
-    if (metric === "all") {
-      const entries = mergedTrendData
-        .map((item) => ({
-          date: item.date,
-          value: `Weight ${item.weightKg != null ? item.weightKg.toFixed(1) : "—"} kg`,
-          note: `Calories ${item.calories != null ? Math.round(item.calories) : "—"} | Burn ${item.spend != null ? Math.round(item.spend) : "—"} | Net ${item.net != null ? Math.round(item.net) : "—"} | Strength ${item.strength != null ? item.strength.toFixed(1) : "—"}`,
-        }))
-        .sort((a, b) => b.date.localeCompare(a.date));
-
-      setDrilldown({
-        title,
-        subtitle: text,
-        entries,
-      });
-      return;
-    }
-
-    openMetricDrilldown(title, metric, text);
-  }
-
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
       <div className="pointer-events-none absolute inset-0">
@@ -1449,23 +1525,6 @@ export default function InsightsPage() {
         </p>
 
         {msg && <p className="mt-4 text-sm text-red-300">{msg}</p>}
-
-        <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1">
-          {RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setSelectedRange(option.id)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                selectedRange === option.id
-                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
-                  : "text-zinc-300 hover:bg-zinc-800"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
 
         <div className="relative mt-6 overflow-hidden rounded-3xl border border-amber-300/25 bg-zinc-900/75 p-5 shadow-[0_0_0_1px_rgba(251,191,36,0.10),0_18px_48px_rgba(0,0,0,0.38)] backdrop-blur-md">
           <div className="pointer-events-none absolute inset-0">
@@ -1749,378 +1808,786 @@ export default function InsightsPage() {
           </div>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-zinc-700/80 bg-zinc-900/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Unlock Next Insights</p>
-          {coachingItems.length === 0 ? (
-            <p className="mt-2 text-sm text-emerald-300">All core insight types are unlocked for this range.</p>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {coachingItems.map((item) => (
-                <p key={item.id} className="rounded-lg border border-zinc-700/70 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-200">
-                  {item.message}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {rangeInsights.facts.map((fact) => (
-            <div
-              key={fact.label}
-              onClick={() =>
-                openMetricDrilldown(
-                  fact.label,
-                  fact.label === "Latest Weight"
-                    ? "weight"
-                    : fact.label === "Latest Calories"
-                      ? "calories"
-                      : fact.label === "Latest Burn"
-                        ? "spend"
-                        : fact.label === "Latest Net Energy"
-                          ? "net"
-                          : "strength",
-                  `${fact.detail}. Raw logs for ${selectedRangeConfig.label}.`
-                )
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  openMetricDrilldown(
-                    fact.label,
-                    fact.label === "Latest Weight"
-                      ? "weight"
-                      : fact.label === "Latest Calories"
-                        ? "calories"
-                        : fact.label === "Latest Burn"
-                          ? "spend"
-                          : fact.label === "Latest Net Energy"
-                            ? "net"
-                            : "strength",
-                    `${fact.detail}. Raw logs for ${selectedRangeConfig.label}.`
-                  );
-                }
-              }}
-              role="button"
-              tabIndex={0}
-              className="rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 text-left backdrop-blur-sm transition hover:border-amber-300/50 hover:bg-zinc-900/90"
+        <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1">
+          {RANGE_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setSelectedRange(option.id)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                selectedRange === option.id
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
             >
-              <p className="text-xs uppercase tracking-wide text-zinc-400">{fact.label}</p>
-              <p className="mt-2 text-2xl font-semibold text-white">
-                {loading
-                  ? "..."
-                  : fact.label === "Latest Weight"
-                    ? (() => {
-                        const latestWeightKg = filteredSeries.bodyweightSeries.at(-1)?.value;
-                        if (latestWeightKg == null || !Number.isFinite(latestWeightKg)) return "—";
-                        return `${(latestWeightKg * LB_PER_KG).toFixed(1)} lb`;
-                      })()
-                    : fact.value}
-              </p>
-              <p className="mt-1 text-xs text-zinc-400">{fact.detail}</p>
-              <p className="mt-2 text-[11px] text-amber-200/80 underline underline-offset-2">
-                Click to view underlying logs
-              </p>
-            </div>
+              {option.label}
+            </button>
           ))}
         </div>
 
-        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+        <div className="mt-4 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-white">Cross-Metric Trend</h2>
-            <div className="flex items-center gap-3">
-              <p className="text-xs text-zinc-400">
-                {chartMode === "raw"
-                  ? `Separate axes · ${selectedRangeConfig.label}`
-                  : `Indexed to 100 at first visible point · ${selectedRangeConfig.label}`}
-              </p>
-              <div className="inline-flex rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1 text-xs">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-100">Weekly Coach Summary</h2>
+            <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+          </div>
+          <div className="mt-3 space-y-2 text-sm">
+            <p className="text-zinc-200"><span className="font-semibold text-emerald-300">Win:</span> {weeklyCoachSummary.win}</p>
+            <p className="text-zinc-200"><span className="font-semibold text-rose-300">Risk:</span> {weeklyCoachSummary.risk}</p>
+            <p className="text-zinc-200"><span className="font-semibold text-sky-300">Pattern:</span> {weeklyCoachSummary.pattern}</p>
+            <p className="text-zinc-200"><span className="font-semibold text-amber-300">Next Action:</span> {weeklyCoachSummary.nextAction}</p>
+            <p className="text-zinc-200"><span className="font-semibold text-violet-300">Confidence:</span> {weeklyCoachSummary.confidence}</p>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-100">Daily Energy Breakdown Trend</h2>
+            <div className="inline-flex items-center gap-1 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1 text-xs">
+              {ENERGY_BREAKDOWN_RANGE_OPTIONS.map((option) => (
                 <button
+                  key={option.id}
                   type="button"
-                  onClick={() => setChartMode("index")}
+                  onClick={() => setEnergyBreakdownRange(option.id)}
                   className={`rounded-full px-3 py-1 transition ${
-                    chartMode === "index"
+                    energyBreakdownRange === option.id
                       ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
                       : "text-zinc-300 hover:bg-zinc-800"
                   }`}
                 >
-                  Index
+                  {option.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setChartMode("raw")}
-                  className={`rounded-full px-3 py-1 transition ${
-                    chartMode === "raw"
-                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
-                      : "text-zinc-300 hover:bg-zinc-800"
-                  }`}
-                >
-                  Raw
-                </button>
-              </div>
+              ))}
             </div>
           </div>
-          <p
-            className="mt-1 text-xs text-zinc-500"
-            title="Strength score = sum of per-exercise session strength on each day. Per-exercise session strength uses set score (weight × reps × rep multiplier), weighted as 40% Set 1 + 60% Set 2 when both exist."
-          >
-            Strength score definition: weighted volume-based daily score from your logged sets.
-          </p>
 
-          <div className="mt-4 h-80 w-full">
-            {mergedTrendData.length === 0 ? (
+          <div className="mt-3 h-80 w-full">
+            {energyBreakdownChartData.length === 0 ? (
               <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
-                Not enough data yet for trend chart.
+                Not enough energy data for this range.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={chartMode === "index" ? indexedTrendData : mergedTrendData}
-                  margin={{ top: 8, right: 16, left: 4, bottom: 8 }}
-                >
+                <LineChart data={energyBreakdownChartData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
                   <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
-                  {chartMode === "index" ? (
-                    <YAxis
-                      tick={{ fill: "#a1a1aa", fontSize: 12 }}
-                      tickLine={false}
-                      axisLine={{ stroke: "#52525b" }}
-                      width={56}
-                      domain={["auto", "auto"]}
-                    />
-                  ) : (
-                    <>
-                      <YAxis
-                        yAxisId="weight"
-                        tick={{ fill: "#67e8f9", fontSize: 11 }}
-                        tickLine={false}
-                        axisLine={{ stroke: "#0891b2" }}
-                        width={52}
-                      />
-                      <YAxis
-                        yAxisId="energy"
-                        orientation="right"
-                        tick={{ fill: "#fcd34d", fontSize: 11 }}
-                        tickLine={false}
-                        axisLine={{ stroke: "#d97706" }}
-                        width={52}
-                      />
-                      <YAxis yAxisId="strength" hide domain={["auto", "auto"]} />
-                    </>
-                  )}
+                  <YAxis tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} width={56} />
                   <Tooltip
                     contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
                     labelStyle={{ color: "#e4e4e7" }}
                     labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
                     formatter={(value, name) => {
                       if (typeof value !== "number") return [value, name];
-                      if (chartMode === "index") return [`${value.toFixed(1)} idx`, name];
-                      if (name?.toString().toLowerCase().includes("weight")) return [`${value.toFixed(1)} kg`, name];
-                      if (name?.toString().toLowerCase().includes("calories")) return [`${Math.round(value)} kcal`, name];
-                      if (name?.toString().toLowerCase().includes("burn")) return [`${Math.round(value)} kcal`, name];
-                      if (name?.toString().toLowerCase().includes("net")) return [`${Math.round(value)} kcal`, name];
-                      return [`${value.toFixed(1)}`, name];
+                      return [`${Math.round(value)} kcal`, name];
                     }}
                   />
                   <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
-                  <Line
-                    type="monotone"
-                    dataKey={chartMode === "index" ? "weightIdx" : "weightKg"}
-                    name={chartMode === "index" ? "Weight Index" : "Weight (kg)"}
-                    yAxisId={chartMode === "index" ? undefined : "weight"}
-                    stroke="#22d3ee"
-                    strokeWidth={2.5}
-                    dot={{ r: 2 }}
-                    connectNulls
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey={chartMode === "index" ? "caloriesIdx" : "calories"}
-                    name={chartMode === "index" ? "Calories Index" : "Calories"}
-                    yAxisId={chartMode === "index" ? undefined : "energy"}
-                    stroke="#f59e0b"
-                    strokeWidth={2.5}
-                    dot={{ r: 2 }}
-                    connectNulls
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey={chartMode === "index" ? "spendIdx" : "spend"}
-                    name={chartMode === "index" ? "Burn Index" : "Estimated Burn"}
-                    yAxisId={chartMode === "index" ? undefined : "energy"}
-                    stroke="#22c55e"
-                    strokeWidth={2.5}
-                    dot={{ r: 2 }}
-                    connectNulls
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey={chartMode === "index" ? "netIdx" : "net"}
-                    name={chartMode === "index" ? "Net Index" : "Net Energy"}
-                    yAxisId={chartMode === "index" ? undefined : "energy"}
-                    stroke="#38bdf8"
-                    strokeWidth={2.5}
-                    strokeDasharray="5 3"
-                    dot={{ r: 2 }}
-                    connectNulls
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey={chartMode === "index" ? "strengthIdx" : "strength"}
-                    name={chartMode === "index" ? "Strength Index" : "Strength"}
-                    yAxisId={chartMode === "index" ? undefined : "strength"}
-                    stroke="#a78bfa"
-                    strokeWidth={2.5}
-                    dot={{ r: 2 }}
-                    connectNulls
-                  />
+                  <Line type="monotone" dataKey="maintenance" name="Maintenance Calories" stroke="#71717a" strokeWidth={2.1} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="totalIntake" name="Total Intake" stroke="#f97316" strokeWidth={2.4} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="calorieDeficit" name="Calorie Deficit" stroke="#22c55e" strokeWidth={2.2} strokeDasharray="5 3" dot={false} connectNulls />
+                  <Line type="monotone" dataKey="caloriesBurned" name="Calories Burned" stroke="#0ea5e9" strokeWidth={2.2} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="totalCalorieDeficit" name="Total Calorie Deficit" stroke="#16a34a" strokeWidth={2.8} dot={false} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             )}
           </div>
         </div>
 
-        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+        <div className="mt-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-white">Trend Decomposition</h2>
-            <p className="text-xs text-zinc-400">
-              7-day rolling averages, week-over-week deltas, and logging adherence
-            </p>
-          </div>
-          <div className="mt-2 inline-flex items-center rounded-full border border-zinc-700/70 bg-zinc-950/60 px-3 py-1 text-xs text-zinc-300">
-            Consistency score:
-            <span className="ml-1 font-semibold text-emerald-300">{trendDecomposition.overallAdherence}%</span>
+            <h2 className="text-lg font-semibold text-white">Insights Visuals</h2>
+            <p className="text-xs text-zinc-400">2 rows • 4 charts each</p>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-            {trendDecomposition.metricRows.map((row) => (
-              <div key={row.metric.id} className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
-                <p className="text-sm font-semibold text-zinc-100">{row.metric.label}</p>
-
-                <p className="mt-2 text-xs uppercase tracking-wide text-zinc-500">7-day rolling average</p>
-                <p className="mt-1 text-base font-medium text-zinc-100">
-                  {row.latestRolling?.value != null ? formatValue(row.latestRolling.value, row.metric) : "Not enough data"}
-                </p>
-                <p className="text-xs text-zinc-500">
-                  {row.latestRolling?.sampleSize != null
-                    ? `${row.latestRolling.sampleSize} logs in current 7-day window`
-                    : "Need logs within a 7-day window"}
-                </p>
-
-                <p className="mt-3 text-xs uppercase tracking-wide text-zinc-500">Week-over-week delta</p>
-                <p className="mt-1 text-base font-medium text-zinc-100">{formatDeltaPercent(row.wow.deltaPct)}</p>
-                <p className="text-xs text-zinc-500">
-                  Recent n={row.wow.recentSample}, prior n={row.wow.priorSample} (minimum 2 logs each week)
-                </p>
-
-                <p className="mt-3 text-xs uppercase tracking-wide text-zinc-500">Logging adherence</p>
-                <p className="mt-1 text-base font-medium text-zinc-100">{row.adherenceScore}%</p>
-                <p className="text-xs text-zinc-500">
-                  {row.actualLogs}/{row.expectedLogs} logs (target {row.metric.targetLogsPerWeek}/week over {row.windowDays} days)
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-            <h2 className="text-lg font-semibold text-white">Correlation Snapshot</h2>
-            <p className="mt-1 text-xs text-zinc-500">
-              Pearson r shown when overlap is at least 3 days. Confidence is based on overlap sample size.
-            </p>
-            <div className="mt-3 space-y-3">
-              {rangeInsights.correlations.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => openCorrelationDrilldown(item.label)}
-                  className="flex min-h-[172px] w-full flex-col rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3 text-left transition hover:border-amber-300/50 hover:bg-zinc-900/70"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-zinc-100">{item.label}</p>
-                    <p className="text-sm font-semibold text-amber-300">
-                      {item.value != null ? item.value.toFixed(2) : "—"}
-                    </p>
-                  </div>
-                  {(() => {
-                    const confidence = getCorrelationConfidence(item.overlapDays);
-                    const missingOverlap = Math.max(0, 3 - item.overlapDays);
-                    return (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${confidence.className}`}>
-                          {confidence.label}
-                        </span>
-                        <span className="text-[11px] text-zinc-400">{confidence.detail}</span>
-                        {missingOverlap > 0 && (
-                          <span className="text-[11px] text-amber-300">
-                            Need {missingOverlap} more overlap day{missingOverlap === 1 ? "" : "s"} for r.
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  <p className="mt-1 text-xs text-zinc-300">{item.interpretation}</p>
-                  <p className="mt-1 text-xs text-zinc-500">Overlap days: {item.overlapDays}</p>
-                  <p className="mt-auto pt-2 text-[11px] text-amber-200/80">Click to view overlap-day raw values</p>
-                </button>
-              ))}
-            </div>
+          <div className="inline-flex w-full flex-wrap items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-2 backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => setTopVisualTab("weight_net_overlay")}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                topVisualTab === "weight_net_overlay"
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              Weight vs Net
+            </button>
+            <button
+              type="button"
+              onClick={() => setTopVisualTab("maintenance_intake_burn")}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                topVisualTab === "maintenance_intake_burn"
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              Intake vs Burn
+            </button>
+            <button
+              type="button"
+              onClick={() => setTopVisualTab("bmi_trend")}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                topVisualTab === "bmi_trend"
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              BMI Trend
+            </button>
+            <button
+              type="button"
+              onClick={() => setTopVisualTab("active_burn_consistency")}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                topVisualTab === "active_burn_consistency"
+                  ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                  : "text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              Burn Consistency
+            </button>
           </div>
 
-          <div className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-            <h2 className="text-lg font-semibold text-white">Top Achievements</h2>
-            <div className="mt-3 space-y-3">
-              {rangeInsights.achievements.map((item) => (
-                <button
-                  key={`${item.period}-${item.title}`}
-                  type="button"
-                  onClick={() => openTextInsightDrilldown(item.title, item.detail)}
-                  className="flex min-h-[128px] w-full flex-col rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3 text-left transition hover:border-amber-300/50 hover:bg-zinc-900/70"
-                >
-                  <p className="text-xs uppercase tracking-wide text-zinc-400">{item.period}</p>
-                  <p className="mt-1 text-sm font-medium text-zinc-100">{item.title}</p>
-                  <p className="mt-1 text-xs text-zinc-300">{item.detail}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {drilldown && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4 py-6">
-            <div className="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-4 shadow-2xl">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-white">{drilldown.title}</p>
-                  <p className="mt-1 text-xs text-zinc-400">{drilldown.subtitle}</p>
+          <>
+              {topVisualTab === "weight_net_overlay" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Weight vs 7-day Net Energy Overlay</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
                 </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Compare bodyweight with smoothed net energy; dashed line shifts net by +3 days to help reveal lagged effects.
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {weightVsNetOverlayData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough weight/net data yet.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={weightVsNetOverlayData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          yAxisId="weight"
+                          tick={{ fill: "#67e8f9", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#0891b2" }}
+                          width={56}
+                        />
+                        <YAxis
+                          yAxisId="energy"
+                          orientation="right"
+                          tick={{ fill: "#fcd34d", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#d97706" }}
+                          width={56}
+                        />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
+                          formatter={(value, name) => {
+                            if (typeof value !== "number") return [value, name];
+                            if (name?.toString().toLowerCase().includes("weight")) return [`${value.toFixed(1)} kg`, name];
+                            return [`${Math.round(value)} kcal`, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="weightKg"
+                          name="Weight (kg)"
+                          yAxisId="weight"
+                          stroke="#22d3ee"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="net7d"
+                          name="Net Energy 7d Avg"
+                          yAxisId="energy"
+                          stroke="#38bdf8"
+                          strokeWidth={2.5}
+                          dot={false}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="net7dLag3"
+                          name="Net Energy 7d Avg (+3d)"
+                          yAxisId="energy"
+                          stroke="#f59e0b"
+                          strokeWidth={2}
+                          strokeDasharray="5 4"
+                          dot={false}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              )}
+
+              {topVisualTab === "maintenance_intake_burn" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Maintenance vs Intake vs Burn (Stacked Daily)</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Daily intake bar compared against stacked burn components (maintenance + active burn) for quick balance reading.
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {maintenanceVsIntakeVsBurnData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough intake/burn data yet.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={maintenanceVsIntakeVsBurnData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} width={56} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
+                          formatter={(value, name) => {
+                            if (typeof value !== "number") return [value, name];
+                            return [`${Math.round(value)} kcal`, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Bar dataKey="intake" name="Intake" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="maintenance" name="Maintenance Burn" stackId="burn" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="activeBurn" name="Active Burn" stackId="burn" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              )}
+
+              {topVisualTab === "bmi_trend" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">BMI Trend with Category Bands</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  BMI over time with shaded category zones (underweight, normal, overweight, obese).
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {!(data?.profileHeightCm && data.profileHeightCm > 0) ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Add height in Profile to enable BMI trend.
+                    </div>
+                  ) : bmiTrendData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough bodyweight logs yet for BMI trend.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={bmiTrendData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          tick={{ fill: "#a1a1aa", fontSize: 12 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#52525b" }}
+                          width={56}
+                          domain={bmiYAxisDomain}
+                          tickFormatter={(value: number) => value.toFixed(1)}
+                        />
+                        <ReferenceArea y1={0} y2={18.5} fill="#0ea5e9" fillOpacity={0.12} />
+                        <ReferenceArea y1={18.5} y2={24.9} fill="#22c55e" fillOpacity={0.12} />
+                        <ReferenceArea y1={25} y2={29.9} fill="#f59e0b" fillOpacity={0.14} />
+                        <ReferenceArea y1={30} y2={60} fill="#ef4444" fillOpacity={0.12} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
+                          formatter={(value, name) => {
+                            if (typeof value !== "number") return [value, name];
+                            return [value.toFixed(1), name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="bmi"
+                          name="BMI"
+                          stroke="#f97316"
+                          strokeWidth={2.8}
+                          dot={{ r: 2 }}
+                          activeDot={{ r: 5 }}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
+                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-sky-400/80" />Underweight (&lt;18.5)</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400/80" />Normal (18.5-24.9)</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400/80" />Overweight (25.0-29.9)</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-rose-400/80" />Obese (30+)</span>
+                </div>
+              </div>
+
+              )}
+
+              {topVisualTab === "active_burn_consistency" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Active Burn Consistency Score</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Weekly consistency from watch activity logs (days logged out of 7), with average active burn per logged day.
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {activeBurnConsistencyWeeklyData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      No active burn logs yet.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={activeBurnConsistencyWeeklyData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          yAxisId="score"
+                          domain={[0, 100]}
+                          tick={{ fill: "#86efac", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#16a34a" }}
+                          width={56}
+                        />
+                        <YAxis
+                          yAxisId="burn"
+                          orientation="right"
+                          tick={{ fill: "#fcd34d", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#d97706" }}
+                          width={56}
+                        />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.weekStart || _label}
+                          formatter={(value, name, item) => {
+                            if (typeof value !== "number") return [value, name];
+                            if (name?.toString().toLowerCase().includes("consistency")) {
+                              const days = item?.payload?.loggedDays;
+                              return [`${value}%${Number.isFinite(days) ? ` (${days}/7 days)` : ""}`, name];
+                            }
+                            return [`${Math.round(value)} kcal`, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Bar
+                          yAxisId="score"
+                          dataKey="consistencyScore"
+                          name="Consistency Score"
+                          fill="#22c55e"
+                          radius={[4, 4, 0, 0]}
+                        />
+                        <Line
+                          yAxisId="burn"
+                          type="monotone"
+                          dataKey="avgActiveBurn"
+                          name="Avg Active Burn"
+                          stroke="#f59e0b"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              )}
+
+              <div className="inline-flex w-full flex-wrap items-center gap-2 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-2 backdrop-blur-md">
                 <button
                   type="button"
-                  onClick={() => setDrilldown(null)}
-                  className="rounded-lg border border-zinc-600 px-3 py-1 text-xs text-zinc-200 transition hover:bg-zinc-800"
+                  onClick={() => setBottomVisualTab("strength_weight_change")}
+                  className={`rounded-full px-3 py-1 text-xs transition ${
+                    bottomVisualTab === "strength_weight_change"
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800"
+                  }`}
                 >
-                  Close
+                  Strength vs Weight
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBottomVisualTab("weekday_pattern")}
+                  className={`rounded-full px-3 py-1 text-xs transition ${
+                    bottomVisualTab === "weekday_pattern"
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800"
+                  }`}
+                >
+                  Weekday Pattern
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBottomVisualTab("fat_signal_14d")}
+                  className={`rounded-full px-3 py-1 text-xs transition ${
+                    bottomVisualTab === "fat_signal_14d"
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800"
+                  }`}
+                >
+                  14-Day Signal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBottomVisualTab("forecast_14d")}
+                  className={`rounded-full px-3 py-1 text-xs transition ${
+                    bottomVisualTab === "forecast_14d"
+                      ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                      : "text-zinc-300 hover:bg-zinc-800"
+                  }`}
+                >
+                  Forecast
                 </button>
               </div>
-              <div className="mt-3 max-h-[60vh] space-y-2 overflow-y-auto pr-1">
-                {drilldown.entries.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-zinc-700 px-3 py-2 text-sm text-zinc-400">
-                    No raw logs available for this card in the selected range.
-                  </p>
-                ) : (
-                  drilldown.entries.map((entry, index) => (
-                    <div key={`${entry.date}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
-                      <p className="text-xs text-zinc-400">{formatEntryDate(entry.date)}</p>
-                      <p className="mt-1 text-sm font-medium text-zinc-100">{entry.value}</p>
-                      {entry.note && <p className="mt-1 text-xs text-zinc-400">{entry.note}</p>}
+
+              {bottomVisualTab === "strength_weight_change" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Workout Strength vs Weight Change</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Dual-axis trend of strength growth (%) and bodyweight change (kg) from the first visible baseline date.
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {strengthVsWeightChangeData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough strength/weight data yet.
                     </div>
-                  ))
-                )}
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={strengthVsWeightChangeData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          yAxisId="strength"
+                          tick={{ fill: "#c4b5fd", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#8b5cf6" }}
+                          width={56}
+                          tickFormatter={(value: number) => `${value.toFixed(0)}%`}
+                        />
+                        <YAxis
+                          yAxisId="weight"
+                          orientation="right"
+                          tick={{ fill: "#67e8f9", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#0891b2" }}
+                          width={56}
+                          tickFormatter={(value: number) => `${value.toFixed(1)}kg`}
+                        />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
+                          formatter={(value, name) => {
+                            if (typeof value !== "number") return [value, name];
+                            if (name?.toString().toLowerCase().includes("strength")) return [`${value.toFixed(1)}%`, name];
+                            return [`${value.toFixed(2)} kg`, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Line
+                          yAxisId="strength"
+                          type="monotone"
+                          dataKey="strengthGrowthPct"
+                          name="Strength Growth"
+                          stroke="#a78bfa"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                        <Line
+                          yAxisId="weight"
+                          type="monotone"
+                          dataKey="weightChangeKg"
+                          name="Weight Change"
+                          stroke="#22d3ee"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+
+              )}
+
+              {bottomVisualTab === "weekday_pattern" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Day-of-Week Performance Pattern</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Average intake, burn, net energy, and strength by weekday to highlight your best and weakest patterns.
+                </p>
+                <div className="mt-3 h-80 w-full">
+                  {weekdayPerformanceData.every(
+                    (row) =>
+                      row.avgIntake == null &&
+                      row.avgBurn == null &&
+                      row.avgNet == null &&
+                      row.avgStrength == null
+                  ) ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough weekly pattern data yet.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={weekdayPerformanceData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="weekday" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          yAxisId="kcal"
+                          tick={{ fill: "#fcd34d", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#d97706" }}
+                          width={56}
+                        />
+                        <YAxis
+                          yAxisId="strength"
+                          orientation="right"
+                          tick={{ fill: "#c4b5fd", fontSize: 11 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#8b5cf6" }}
+                          width={56}
+                        />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          formatter={(value, name, item) => {
+                            if (typeof value !== "number") return [value, name];
+                            if (name?.toString().toLowerCase().includes("strength")) {
+                              const count = item?.payload?.strengthCount;
+                              return [`${value.toFixed(1)}${Number.isFinite(count) ? ` (n=${count})` : ""}`, name];
+                            }
+                            const key =
+                              name === "Avg Intake"
+                                ? "intakeCount"
+                                : name === "Avg Burn"
+                                  ? "burnCount"
+                                  : "netCount";
+                            const count = item?.payload?.[key];
+                            return [`${Math.round(value)} kcal${Number.isFinite(count) ? ` (n=${count})` : ""}`, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Bar
+                          yAxisId="kcal"
+                          dataKey="avgIntake"
+                          name="Avg Intake"
+                          fill="#f59e0b"
+                          radius={[4, 4, 0, 0]}
+                        />
+                        <Bar
+                          yAxisId="kcal"
+                          dataKey="avgBurn"
+                          name="Avg Burn"
+                          fill="#22c55e"
+                          radius={[4, 4, 0, 0]}
+                        />
+                        <Line
+                          yAxisId="kcal"
+                          type="monotone"
+                          dataKey="avgNet"
+                          name="Avg Net"
+                          stroke="#38bdf8"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                        <Line
+                          yAxisId="strength"
+                          type="monotone"
+                          dataKey="avgStrength"
+                          name="Avg Strength"
+                          stroke="#a78bfa"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          strokeDasharray="5 3"
+                          connectNulls
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              )}
+
+              {bottomVisualTab === "fat_signal_14d" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Rolling 14-Day Fat-Loss/Fat-Gain Signal</h3>
+                  <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Smoothed projection from 14-day net energy trend plus observed weight direction. Negative means fat-loss signal, positive means fat-gain signal.
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {fatSignal14DayData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough net/weight overlap yet for 14-day signal.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={fatSignal14DayData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          tick={{ fill: "#a1a1aa", fontSize: 12 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#52525b" }}
+                          width={56}
+                          tickFormatter={(value: number) => `${value.toFixed(1)}kg`}
+                        />
+                        <ReferenceLine y={0} stroke="#a1a1aa" strokeDasharray="4 4" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
+                          formatter={(value) => {
+                            if (typeof value !== "number") return [value, "14d Signal"];
+                            const direction = value < 0 ? "Fat-loss signal" : value > 0 ? "Fat-gain signal" : "Neutral";
+                            return [`${value.toFixed(2)} kg (${direction})`, "14d Signal"];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="smoothedProjected14dKg"
+                          name="14d Signal"
+                          stroke="#f97316"
+                          strokeWidth={2.8}
+                          dot={{ r: 2 }}
+                          activeDot={{ r: 5 }}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              )}
+
+              {bottomVisualTab === "forecast_14d" && (
+              <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-zinc-100">Forecast (Next 7–14 Days)</h3>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Estimate</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Projected bodyweight path using recent rolling trends, shown with an uncertainty band. This is guidance, not a guarantee.
+                </p>
+                <div className="mt-3 h-72 w-full">
+                  {weightForecast14DayData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
+                      Not enough recent weight/net trend data for forecast.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={weightForecast14DayData} margin={{ top: 8, right: 16, left: 4, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
+                        <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
+                        <YAxis
+                          tick={{ fill: "#a1a1aa", fontSize: 12 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "#52525b" }}
+                          width={56}
+                          tickFormatter={(value: number) => `${value.toFixed(1)}kg`}
+                        />
+                        <ReferenceLine y={weightForecast14DayData.findLast((row) => row.actualWeightKg != null)?.actualWeightKg ?? 0} stroke="#52525b" strokeDasharray="3 3" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
+                          labelStyle={{ color: "#e4e4e7" }}
+                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.date || _label}
+                          formatter={(value, name, item) => {
+                            if (typeof value !== "number") return [value, name];
+                            if (name === "Forecast Band") {
+                              const low = item?.payload?.forecastLowKg;
+                              const range = item?.payload?.forecastRangeKg;
+                              if (typeof low === "number" && typeof range === "number") {
+                                const high = low + range;
+                                return [`${low.toFixed(2)} to ${high.toFixed(2)} kg`, name];
+                              }
+                            }
+                            return [`${value.toFixed(2)} kg`, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+                        <Area
+                          type="monotone"
+                          dataKey="forecastLowKg"
+                          name="Forecast Base"
+                          stackId="forecastBand"
+                          stroke="none"
+                          fill="transparent"
+                          connectNulls
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="forecastRangeKg"
+                          name="Forecast Band"
+                          stackId="forecastBand"
+                          stroke="none"
+                          fill="#f59e0b"
+                          fillOpacity={0.18}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="actualWeightKg"
+                          name="Actual Weight"
+                          stroke="#22d3ee"
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="forecastWeightKg"
+                          name="Forecast Weight"
+                          stroke="#f97316"
+                          strokeWidth={2.5}
+                          strokeDasharray="6 4"
+                          dot={false}
+                          connectNulls
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              )}
+
+          </>
+        </div>
 
       </div>
     </div>
