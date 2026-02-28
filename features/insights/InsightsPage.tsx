@@ -1827,7 +1827,7 @@ export default function InsightsPage() {
 
         <div className="mt-4 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-100">Weekly Coach Summary</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-100">Coach Summary</h2>
             <p className="text-xs text-zinc-400">{selectedRangeConfig.label}</p>
           </div>
           <div className="mt-3 space-y-2 text-sm">
