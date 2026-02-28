@@ -21,6 +21,7 @@ type ThemeMode = "light" | "dark";
 type SaveOverlayState = "hidden" | "saving" | "success";
 type AvatarCropState = {
   sourceUrl: string;
+  isHeicLike: boolean;
 };
 const NAME_PATTERN = /^[A-Za-z][A-Za-z '-]*$/;
 const PASSWORD_RULES = [
@@ -38,6 +39,70 @@ const ACTIVITY_LEVEL_OPTIONS: Array<{ id: ActivityLevel; label: string }> = [
   { id: "extra_active", label: "Extra active" },
 ];
 
+function isHeicLikeFile(file: File) {
+  const mimeType = file.type.toLowerCase();
+  const fileName = file.name.toLowerCase();
+  return (
+    mimeType === "image/heic" ||
+    mimeType === "image/heif" ||
+    mimeType === "image/heic-sequence" ||
+    mimeType === "image/heif-sequence" ||
+    fileName.endsWith(".heic") ||
+    fileName.endsWith(".heif")
+  );
+}
+
+function canDecodeImageSource(sourceUrl: string) {
+  return new Promise<boolean>((resolve) => {
+    const image = new window.Image();
+    image.onload = () => resolve(true);
+    image.onerror = () => resolve(false);
+    image.src = sourceUrl;
+  });
+}
+
+async function convertHeicLikeFileToJpegBlob(file: File): Promise<Blob | null> {
+  try {
+    const normalizedBlob = file.type
+      ? file
+      : new Blob([await file.arrayBuffer()], {
+          type: "image/heic",
+        });
+    const { default: heic2any } = await import("heic2any");
+    const converted = await heic2any({
+      blob: normalizedBlob,
+      toType: "image/jpeg",
+      quality: 0.92,
+    });
+    const first = Array.isArray(converted) ? converted[0] : converted;
+    return first instanceof Blob ? first : null;
+  } catch {
+    return null;
+  }
+}
+
+async function convertHeicLikeFileViaServer(file: File): Promise<Blob | null> {
+  try {
+    const payload = new FormData();
+    payload.append("file", file);
+    const response = await fetch("/api/images/convert-heic", {
+      method: "POST",
+      body: payload,
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const blob = await response.blob();
+    if (!blob || blob.size <= 0) {
+      return null;
+    }
+    return blob;
+  } catch {
+    return null;
+  }
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const [userId, setUserId] = useState<string>("");
@@ -49,6 +114,7 @@ export default function ProfilePage() {
   const [isSavingName, setIsSavingName] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [photoMsg, setPhotoMsg] = useState<string | null>(null);
   const [isDeleteAvatarConfirmOpen, setIsDeleteAvatarConfirmOpen] = useState(false);
   const [saveOverlayState, setSaveOverlayState] = useState<SaveOverlayState>("hidden");
   const [avatarCropState, setAvatarCropState] = useState<AvatarCropState | null>(null);
@@ -332,19 +398,52 @@ export default function ProfilePage() {
     setMsg("Maintenance profile updated ✅");
   }
 
-  function openCropForFile(file: File) {
+  async function openCropForFile(file: File) {
     if (!userId) return;
+    setMsg(null);
+    setPhotoMsg(null);
+    const setPhotoError = (text: string) => {
+      setMsg(text);
+      setPhotoMsg(text);
+    };
 
     const mimeType = file.type.toLowerCase();
-    if (!mimeType.startsWith("image/")) {
-      setMsg("Please choose an image file.");
+    const isHeicLike = isHeicLikeFile(file);
+    if (!mimeType.startsWith("image/") && !isHeicLike) {
+      setPhotoError("Please choose an image file.");
       return;
     }
 
-    const sourceUrl = URL.createObjectURL(file);
+    let sourceUrl = URL.createObjectURL(file);
+    let sourceIsHeicLike = isHeicLike;
+
+    if (isHeicLike) {
+      const convertedJpegBlob =
+        (await convertHeicLikeFileToJpegBlob(file)) ??
+        (await convertHeicLikeFileViaServer(file));
+      if (convertedJpegBlob) {
+        URL.revokeObjectURL(sourceUrl);
+        sourceUrl = URL.createObjectURL(convertedJpegBlob);
+        sourceIsHeicLike = false;
+      }
+    }
+
+    const canDecode = await canDecodeImageSource(sourceUrl);
+    if (!canDecode) {
+      URL.revokeObjectURL(sourceUrl);
+      if (isHeicLike) {
+        setPhotoError("Could not convert HEIC/HEIF in this browser. Try a different HEIC file or convert to JPG/PNG.");
+      } else {
+        setPhotoError("Could not open this image file.");
+      }
+      return;
+    }
+
     setAvatarCropState({
       sourceUrl,
+      isHeicLike: sourceIsHeicLike,
     });
+    setPhotoMsg(null);
     setCropZoom(1.2);
     setCropOffsetX(0);
     setCropOffsetY(0);
@@ -373,6 +472,7 @@ export default function ProfilePage() {
       const sourceUrl = URL.createObjectURL(blob);
       setAvatarCropState({
         sourceUrl,
+        isHeicLike: false,
       });
       setCropZoom(1.2);
       setCropOffsetX(0);
@@ -390,10 +490,20 @@ export default function ProfilePage() {
 
     const image = new window.Image();
     image.src = avatarCropState.sourceUrl;
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("Image load failed"));
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("Image load failed"));
+      });
+    } catch {
+      setIsUploadingAvatar(false);
+      if (avatarCropState.isHeicLike) {
+        setMsg("HEIC/HEIF decode failed in this browser. Try Safari or convert the file to JPG/PNG.");
+      } else {
+        setMsg("Failed to load selected image.");
+      }
+      return;
+    }
 
     const size = 512;
     const previewSize = 288;
@@ -408,6 +518,11 @@ export default function ProfilePage() {
     }
 
     const baseScale = Math.max(previewSize / image.width, previewSize / image.height);
+    if (!Number.isFinite(baseScale) || baseScale <= 0) {
+      setIsUploadingAvatar(false);
+      setMsg("Failed to read image dimensions for cropping.");
+      return;
+    }
     const finalScale = baseScale * cropZoom;
     const drawWidth = image.width * finalScale * (size / previewSize);
     const drawHeight = image.height * finalScale * (size / previewSize);
@@ -418,7 +533,17 @@ export default function ProfilePage() {
 
     context.fillStyle = "#111827";
     context.fillRect(0, 0, size, size);
-    context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+    try {
+      context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+    } catch {
+      setIsUploadingAvatar(false);
+      if (avatarCropState.isHeicLike) {
+        setMsg("HEIC/HEIF render failed during crop. Try converting this file to JPG/PNG first.");
+      } else {
+        setMsg("Failed to render selected image.");
+      }
+      return;
+    }
 
     const blob = await new Promise<Blob | null>((resolve) => {
       canvas.toBlob((generatedBlob) => resolve(generatedBlob), "image/jpeg", 0.92);
@@ -575,13 +700,13 @@ export default function ProfilePage() {
                   {isUploadingAvatar ? "Uploading..." : "Upload / Change"}
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.heic,.heif,image/heic,image/heif"
                     className="hidden"
                     disabled={isUploadingAvatar || isSavingName || isSigningOut}
                     onChange={(event) => {
                       const nextFile = event.target.files?.[0];
                       if (nextFile) {
-                        openCropForFile(nextFile);
+                        void openCropForFile(nextFile);
                       }
                       event.currentTarget.value = "";
                     }}
@@ -603,6 +728,7 @@ export default function ProfilePage() {
                 >
                   Delete photo
                 </button>
+                {photoMsg && <p className="mt-2 max-w-sm text-xs text-red-300">{photoMsg}</p>}
               </div>
             </div>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

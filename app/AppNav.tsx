@@ -15,6 +15,7 @@ export default function AppNav() {
     pathname === ROUTES.login ||
     pathname === ROUTES.signup ||
     pathname === ROUTES.forgotPassword ||
+    pathname === ROUTES.sessionExpired ||
     pathname === ROUTES.launch ||
     pathname === ROUTES.signout;
 

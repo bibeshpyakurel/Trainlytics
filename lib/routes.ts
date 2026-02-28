@@ -2,6 +2,7 @@ export const ROUTES = {
   login: "/login",
   signup: "/signup",
   forgotPassword: "/forgot-password",
+  sessionExpired: "/session-expired",
   launch: "/launch",
   signout: "/signout",
   dashboard: "/dashboard",
@@ -15,7 +16,6 @@ export const ROUTES = {
 export const PUBLIC_ROUTES = [ROUTES.login, ROUTES.signup, ROUTES.forgotPassword] as const;
 
 export const PROTECTED_ROUTES = [
-  ROUTES.launch,
   ROUTES.dashboard,
   ROUTES.insights,
   ROUTES.log,
