@@ -10,7 +10,6 @@ import {
   formatSummaryWeight,
   makeSetKey,
 } from "@/features/log/formatters";
-import { sortSessionSummaryItems } from "@/features/log/summary";
 import {
   buildSessionSummaryItems,
   checkSessionDateCollision,

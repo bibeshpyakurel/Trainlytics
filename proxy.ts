@@ -2,14 +2,30 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { ROUTES, isProtectedRoute, isPublicRoute } from "@/lib/routes";
 import {
-  SESSION_MAX_AGE_MS,
   SESSION_STARTED_AT_COOKIE,
   isSessionExpiredFromStart,
   parseSessionStartedAt,
 } from "@/lib/sessionTimeout";
 
+function isEntryDocumentRequest(request: NextRequest) {
+  return request.method === "GET" && request.headers.get("sec-fetch-dest") === "document";
+}
+
+function buildNextFromRequest(request: NextRequest) {
+  return `${request.nextUrl.pathname}${request.nextUrl.search}`;
+}
+
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+
+  if (pathname !== ROUTES.launch && pathname !== ROUTES.sessionExpired && isEntryDocumentRequest(request)) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = ROUTES.launch;
+    redirectUrl.search = "";
+    redirectUrl.searchParams.set("next", buildNextFromRequest(request));
+    return NextResponse.redirect(redirectUrl);
+  }
+
   const routeNeedsAuthCheck = isProtectedRoute(pathname) || isPublicRoute(pathname);
 
   if (!routeNeedsAuthCheck) {

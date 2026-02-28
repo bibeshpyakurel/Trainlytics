@@ -5,25 +5,35 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_COPY } from "@/lib/appCopy";
 import { TABLES } from "@/lib/dbNames";
-import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { ROUTES, buildLoginRedirectPath, getSafeProtectedNextRoute } from "@/lib/routes";
 
 export default function LaunchPage() {
   const router = useRouter();
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
-  const [firstName, setFirstName] = useState<string | null>(null);
+  const [welcomeLabel, setWelcomeLabel] = useState("Welcome");
+  const [subtitle, setSubtitle] = useState<string>(APP_COPY.launchSignedOutText);
 
   useEffect(() => {
     let isMounted = true;
     let exitTimer: number | undefined;
     let routeTimer: number | undefined;
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const nextParam = params?.get("next");
+    const safeNextRoute = getSafeProtectedNextRoute(nextParam);
 
     (async () => {
       const { data, error } = await supabase.auth.getSession();
       if (!isMounted) return;
 
       if (error || !data.session) {
-        router.replace(buildLoginRedirectPath(ROUTES.launch, "session_expired"));
+        setWelcomeLabel("Welcome");
+        setSubtitle(APP_COPY.launchSignedOutText);
+        setVisible(true);
+        exitTimer = window.setTimeout(() => setExiting(true), 1300);
+        routeTimer = window.setTimeout(() => {
+          router.replace(buildLoginRedirectPath(safeNextRoute ?? ROUTES.dashboard, "auth_required"));
+        }, 1800);
         return;
       }
 
@@ -34,11 +44,13 @@ export default function LaunchPage() {
         .eq("user_id", userId)
         .maybeSingle();
       if (!isMounted) return;
-      setFirstName((profileData?.first_name as string | null | undefined) ?? null);
+      const resolvedFirstName = (profileData?.first_name as string | null | undefined) ?? null;
+      setWelcomeLabel(resolvedFirstName?.trim() ? `Welcome Back, ${resolvedFirstName.trim()}` : "Welcome Back");
+      setSubtitle(APP_COPY.launchSignedInText);
 
       setVisible(true);
       exitTimer = window.setTimeout(() => setExiting(true), 1300);
-      routeTimer = window.setTimeout(() => router.replace(ROUTES.dashboard), 1800);
+      routeTimer = window.setTimeout(() => router.replace(safeNextRoute ?? ROUTES.dashboard), 1800);
     })();
 
     return () => {
@@ -61,7 +73,7 @@ export default function LaunchPage() {
             visible && !exiting ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
           }`}
         >
-          {firstName?.trim() ? `Welcome Back, ${firstName.trim()}` : "Welcome Back"}
+          {welcomeLabel}
         </p>
         <h1
           className={`mt-4 bg-gradient-to-r from-amber-300 via-orange-300 to-red-300 bg-clip-text text-5xl font-black text-transparent transition-all duration-700 sm:text-7xl ${
@@ -75,7 +87,14 @@ export default function LaunchPage() {
             visible && !exiting ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
           }`}
         >
-          {APP_COPY.launchPreparingText}
+          {APP_COPY.launchIntroText}
+        </p>
+        <p
+          className={`mt-2 text-xs text-zinc-400 transition-all duration-500 ${
+            visible && !exiting ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+          }`}
+        >
+          {subtitle}
         </p>
       </div>
     </div>

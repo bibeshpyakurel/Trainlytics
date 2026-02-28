@@ -1022,7 +1022,27 @@ export default function InsightsPage() {
       assistantAbortRef.current?.abort();
       assistantAbortRef.current = null;
       clearFormatSwapTimer();
-      stopVoiceInput();
+      keepListeningRef.current = false;
+      if (voiceStopTimerRef.current != null) {
+        clearTimeout(voiceStopTimerRef.current);
+        voiceStopTimerRef.current = null;
+      }
+      if (typeof window !== "undefined" && speechFrameRef.current != null) {
+        window.cancelAnimationFrame(speechFrameRef.current);
+        speechFrameRef.current = null;
+      }
+      pendingSpeechFinalRef.current = "";
+      pendingSpeechInterimRef.current = "";
+      const activeRecognition = recognitionRef.current;
+      recognitionRef.current = null;
+      if (activeRecognition) {
+        try {
+          activeRecognition.stop?.();
+          activeRecognition.abort?.();
+        } catch {
+          // Ignore provider-specific cleanup errors during unmount.
+        }
+      }
     };
   }, []);
 

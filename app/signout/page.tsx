@@ -6,7 +6,7 @@ import { APP_COPY } from "@/lib/appCopy";
 import { ROUTES } from "@/lib/routes";
 import { supabase } from "@/lib/supabaseClient";
 import { clearAccountScopedClientState } from "@/lib/accountScopedClientState";
-import { SESSION_STARTED_AT_COOKIE } from "@/lib/sessionTimeout";
+import { SESSION_LAST_ACTIVITY_STORAGE_KEY, SESSION_STARTED_AT_COOKIE } from "@/lib/sessionTimeout";
 
 export default function SignOutPage() {
   const router = useRouter();
@@ -35,6 +35,7 @@ export default function SignOutPage() {
       }
 
       document.cookie = `${SESSION_STARTED_AT_COOKIE}=; path=/; max-age=0; samesite=lax`;
+      localStorage.removeItem(SESSION_LAST_ACTIVITY_STORAGE_KEY);
       clearAccountScopedClientState();
       setIsSigningOut(false);
       exitTimer = window.setTimeout(() => setExiting(true), 700);

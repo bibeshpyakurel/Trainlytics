@@ -119,8 +119,9 @@ export function useLogSessionData({
   }, [split]);
 
   useEffect(() => {
-    const requestVersion = requestTrackerRef.current.next();
-    const isStale = () => requestTrackerRef.current.isStale(requestVersion);
+    const tracker = requestTrackerRef.current;
+    const requestVersion = tracker.next();
+    const isStale = () => tracker.isStale(requestVersion);
 
     (async () => {
       if (isStale()) return;
@@ -341,7 +342,7 @@ export function useLogSessionData({
     })();
 
     return () => {
-      requestTrackerRef.current.invalidate();
+      tracker.invalidate();
     };
   }, [date, isCurrentDate, loadLastSessions, loadRecentSessions, setMsg, split]);
 
