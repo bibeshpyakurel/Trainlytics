@@ -49,6 +49,11 @@ export type InsightsAiContext = {
       caloriesKcal: number | null;
       burnKcal: number | null;
       netEnergyKcal: number | null;
+      maintenanceKcalForDay: number | null;
+      activeCaloriesKcal: number | null;
+      totalBurnKcal: number | null;
+      netCaloriesKcal: number | null;
+      isPartialEstimate: boolean;
       strengthScore: number | null;
     }>;
     workoutSessions: Array<{
@@ -75,6 +80,17 @@ export type InsightsAiContext = {
     burn: Array<{ date: string; estimatedKcalSpent: number }>;
     netEnergy: Array<{ date: string; netKcal: number }>;
     strength: Array<{ date: string; score: number }>;
+  };
+  energyDataContract: {
+    note: string;
+    dailyEnergySnapshots: Array<{
+      date: string;
+      maintenance_kcal_for_day: number | null;
+      active_calories_kcal: number | null;
+      total_burn_kcal: number | null;
+      net_calories_kcal: number | null;
+      is_partial_estimate: boolean;
+    }>;
   };
 };
 
@@ -125,7 +141,7 @@ export async function loadInsightsAiContextForUser(
   const oneYearAgoIso = toIsoDate(oneYearAgo);
   const todayIso = toIsoDate(new Date());
 
-  const [bodyweightRes, caloriesRes, metabolicRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
+  const [bodyweightRes, caloriesRes, metabolicRes, dailyEnergyRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
     supabase
       .from(TABLES.bodyweightLogs)
       .select("log_date,weight_input,unit_input,weight_kg")
@@ -139,6 +155,11 @@ export async function loadInsightsAiContextForUser(
     supabase
       .from(TABLES.metabolicActivityLogs)
       .select("log_date,estimated_kcal_spent")
+      .eq("user_id", userId)
+      .order("log_date", { ascending: true }),
+    supabase
+      .from(TABLES.dailyEnergyMetrics)
+      .select("log_date,maintenance_kcal_for_day,active_calories_kcal,total_burn_kcal,net_calories_kcal")
       .eq("user_id", userId)
       .order("log_date", { ascending: true }),
     supabase
@@ -165,6 +186,7 @@ export async function loadInsightsAiContextForUser(
   if (bodyweightRes.error) throw bodyweightRes.error;
   if (caloriesRes.error) throw caloriesRes.error;
   if (metabolicRes.error) throw metabolicRes.error;
+  if (dailyEnergyRes.error) throw dailyEnergyRes.error;
   if (workoutSetsRes.error) throw workoutSetsRes.error;
   if (workoutSessionsRes.error) throw workoutSessionsRes.error;
   if (exercisesRes.error) throw exercisesRes.error;
@@ -285,6 +307,17 @@ export async function loadInsightsAiContextForUser(
   const burnByDate = new Map(metabolicActivitySeries.map((point) => [point.date, point.value]));
   const netByDate = new Map(netEnergySeries.map((point) => [point.date, point.value]));
   const strengthByDate = new Map(strengthSeries.map((point) => [point.date, point.value]));
+  const energyByDate = new Map(
+    (dailyEnergyRes.data ?? []).map((row) => [
+      row.log_date,
+      {
+        maintenanceKcalForDay: row.maintenance_kcal_for_day != null ? Number(row.maintenance_kcal_for_day) : null,
+        activeCaloriesKcal: row.active_calories_kcal != null ? Number(row.active_calories_kcal) : null,
+        totalBurnKcal: row.total_burn_kcal != null ? Number(row.total_burn_kcal) : null,
+        netCaloriesKcal: row.net_calories_kcal != null ? Number(row.net_calories_kcal) : null,
+      },
+    ])
+  );
 
   const workoutSessionsInYear = (workoutSessionsRes.data ?? [])
     .filter((row) => row.session_date >= oneYearAgoIso)
@@ -369,15 +402,49 @@ export async function loadInsightsAiContextForUser(
   ]);
   const dailyMetrics = [...allTimelineDates]
     .sort((a, b) => a.localeCompare(b))
-    .map((date) => ({
-      date,
-      weightKg: weightByDate.get(date) ?? null,
-      weightLb: weightByDate.get(date) != null ? Number((Number(weightByDate.get(date)) * LB_PER_KG).toFixed(2)) : null,
-      caloriesKcal: caloriesByDate.get(date) ?? null,
-      burnKcal: burnByDate.get(date) ?? null,
-      netEnergyKcal: netByDate.get(date) ?? null,
-      strengthScore: strengthByDate.get(date) ?? null,
-    }));
+    .map((date) => {
+      const energy = energyByDate.get(date);
+      const maintenanceKcalForDay = energy?.maintenanceKcalForDay ?? null;
+      const activeCaloriesKcal = energy?.activeCaloriesKcal ?? null;
+      const totalBurnKcal = energy?.totalBurnKcal ?? null;
+      const netCaloriesKcal = energy?.netCaloriesKcal ?? null;
+      const isPartialEstimate =
+        maintenanceKcalForDay == null ||
+        activeCaloriesKcal == null ||
+        totalBurnKcal == null ||
+        netCaloriesKcal == null;
+
+      return {
+        date,
+        weightKg: weightByDate.get(date) ?? null,
+        weightLb: weightByDate.get(date) != null ? Number((Number(weightByDate.get(date)) * LB_PER_KG).toFixed(2)) : null,
+        caloriesKcal: caloriesByDate.get(date) ?? null,
+        burnKcal: activeCaloriesKcal ?? burnByDate.get(date) ?? null,
+        netEnergyKcal: netCaloriesKcal ?? netByDate.get(date) ?? null,
+        maintenanceKcalForDay,
+        activeCaloriesKcal,
+        totalBurnKcal,
+        netCaloriesKcal,
+        isPartialEstimate,
+        strengthScore: strengthByDate.get(date) ?? null,
+      };
+    });
+  const dailyEnergySnapshots = (dailyEnergyRes.data ?? [])
+    .filter((row) => row.log_date >= oneYearAgoIso && row.log_date <= todayIso)
+    .map((row) => {
+      const maintenance = row.maintenance_kcal_for_day != null ? Number(row.maintenance_kcal_for_day) : null;
+      const active = row.active_calories_kcal != null ? Number(row.active_calories_kcal) : null;
+      const totalBurn = row.total_burn_kcal != null ? Number(row.total_burn_kcal) : null;
+      const net = row.net_calories_kcal != null ? Number(row.net_calories_kcal) : null;
+      return {
+        date: row.log_date,
+        maintenance_kcal_for_day: maintenance,
+        active_calories_kcal: active,
+        total_burn_kcal: totalBurn,
+        net_calories_kcal: net,
+        is_partial_estimate: maintenance == null || active == null || totalBurn == null || net == null,
+      };
+    });
   const yearlyRawLogs = {
     bodyweight: bodyweightSeries
       .filter((point) => point.date >= oneYearAgoIso && point.date <= todayIso)
@@ -413,5 +480,9 @@ export async function loadInsightsAiContextForUser(
       workoutSessions: workoutSessionsDetailed,
     },
     yearlyRawLogs,
+    energyDataContract: {
+      note: "active_calories_kcal is activity-only from watch and excludes maintenance/resting. maintenance_kcal_for_day is computed separately. total_burn_kcal = maintenance_kcal_for_day + active_calories_kcal. If any component is missing, treat the result as a partial estimate.",
+      dailyEnergySnapshots,
+    },
   };
 }

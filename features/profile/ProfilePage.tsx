@@ -13,6 +13,9 @@ import TogglePill from "@/shared/ui/TogglePill";
 import { STORAGE_BUCKETS, STORAGE_PUBLIC_PATH_MARKERS, TABLES } from "@/lib/dbNames";
 import { APP_COPY } from "@/lib/appCopy";
 import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { refreshEnergyMetricsAfterWrite, recomputeMaintenanceKcalCurrentForUser } from "@/lib/dailyEnergyMetrics";
+import { MAINTENANCE_FORMULA_DEFINITION, MAINTENANCE_METHODS } from "@/lib/energyMetrics";
+import type { ActivityLevel } from "@/lib/energyCalculations";
 
 type ThemeMode = "light" | "dark";
 type SaveOverlayState = "hidden" | "saving" | "success";
@@ -26,6 +29,13 @@ const PASSWORD_RULES = [
   { label: "At least 1 lowercase letter", test: (value: string) => /[a-z]/.test(value) },
   { label: "At least 1 number", test: (value: string) => /[0-9]/.test(value) },
   { label: "At least 1 special character", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
+];
+const ACTIVITY_LEVEL_OPTIONS: Array<{ id: ActivityLevel; label: string }> = [
+  { id: "sedentary", label: "Sedentary" },
+  { id: "light", label: "Light" },
+  { id: "moderate", label: "Moderate" },
+  { id: "very_active", label: "Very active" },
+  { id: "extra_active", label: "Extra active" },
 ];
 
 export default function ProfilePage() {
@@ -51,9 +61,16 @@ export default function ProfilePage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [isSavingEnergyProfile, setIsSavingEnergyProfile] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [launchAnimationEnabled, setLaunchAnimationEnabled] = useState(true);
   const [speakRepliesEnabled, setSpeakRepliesEnabled] = useState(false);
+  const [sex, setSex] = useState<"male" | "female" | "other" | "">("");
+  const [birthDate, setBirthDate] = useState("");
+  const [heightCm, setHeightCm] = useState("");
+  const [activityLevel, setActivityLevel] = useState<ActivityLevel | "">("");
+  const [maintenanceKcalCurrent, setMaintenanceKcalCurrent] = useState<number | null>(null);
+  const [maintenanceUpdatedAt, setMaintenanceUpdatedAt] = useState<string | null>(null);
   const normalizedFirstName = firstName.trim();
   const normalizedLastName = lastName.trim();
   const isNameFormValid = useMemo(() => {
@@ -66,6 +83,12 @@ export default function ProfilePage() {
     () => PASSWORD_RULES.filter((rule) => !rule.test(newPassword)),
     [newPassword]
   );
+  const maintenanceUpdatedLabel = useMemo(() => {
+    if (!maintenanceUpdatedAt) return "—";
+    const parsed = new Date(maintenanceUpdatedAt);
+    if (!Number.isFinite(parsed.getTime())) return "—";
+    return parsed.toLocaleString();
+  }, [maintenanceUpdatedAt]);
 
   useEffect(() => {
     let isMounted = true;
@@ -96,7 +119,7 @@ export default function ProfilePage() {
 
       const { data: profileRow, error: profileError } = await supabase
         .from(TABLES.profiles)
-        .select("first_name,last_name,avatar_url")
+        .select("first_name,last_name,avatar_url,sex,birth_date,height_cm,activity_level,maintenance_kcal_current,maintenance_updated_at")
         .eq("user_id", sessionUserId)
         .maybeSingle();
 
@@ -108,6 +131,20 @@ export default function ProfilePage() {
         setFirstName(profileRow?.first_name ?? "");
         setLastName(profileRow?.last_name ?? "");
         setAvatarUrl(profileRow?.avatar_url ?? null);
+        setSex(profileRow?.sex === "male" || profileRow?.sex === "female" || profileRow?.sex === "other" ? profileRow.sex : "");
+        setBirthDate(profileRow?.birth_date ?? "");
+        setHeightCm(profileRow?.height_cm != null ? String(profileRow.height_cm) : "");
+        setActivityLevel(
+          profileRow?.activity_level === "sedentary" ||
+          profileRow?.activity_level === "light" ||
+          profileRow?.activity_level === "moderate" ||
+          profileRow?.activity_level === "very_active" ||
+          profileRow?.activity_level === "extra_active"
+            ? profileRow.activity_level
+            : ""
+        );
+        setMaintenanceKcalCurrent(profileRow?.maintenance_kcal_current != null ? Number(profileRow.maintenance_kcal_current) : null);
+        setMaintenanceUpdatedAt(profileRow?.maintenance_updated_at ?? null);
       }
 
       setLoading(false);
@@ -235,10 +272,64 @@ export default function ProfilePage() {
 
     setFirstName(normalizedFirstName);
     setLastName(normalizedLastName);
+    await refreshEnergyMetricsAfterWrite({
+      source: "profile",
+      userId,
+      refreshMaintenanceCurrent: true,
+    });
     setIsSavingName(false);
     setSaveOverlayState("success");
     window.setTimeout(() => setSaveOverlayState("hidden"), 900);
     setMsg("Profile name saved ✅");
+  }
+
+  async function saveEnergyProfile() {
+    if (!userId) return;
+    setIsSavingEnergyProfile(true);
+    setMsg(null);
+
+    const parsedHeightCm = heightCm.trim().length > 0 ? Number(heightCm) : null;
+    if (parsedHeightCm != null && (!Number.isFinite(parsedHeightCm) || parsedHeightCm <= 0 || parsedHeightCm > 300)) {
+      setIsSavingEnergyProfile(false);
+      setMsg("Height must be a valid value between 1 and 300 cm.");
+      return;
+    }
+
+    const { error } = await supabase.from(TABLES.profiles).upsert(
+      {
+        user_id: userId,
+        sex: sex || null,
+        birth_date: birthDate || null,
+        height_cm: parsedHeightCm,
+        activity_level: activityLevel || null,
+        maintenance_method: MAINTENANCE_METHODS.mifflinStJeorActivityMultiplier,
+      },
+      { onConflict: "user_id" }
+    );
+
+    if (error) {
+      setIsSavingEnergyProfile(false);
+      setMsg(`Failed to save maintenance inputs: ${error.message}`);
+      return;
+    }
+
+    const recalcError = await recomputeMaintenanceKcalCurrentForUser(userId);
+    if (recalcError) {
+      setIsSavingEnergyProfile(false);
+      setMsg(`Saved profile inputs, but maintenance refresh failed: ${recalcError}`);
+      return;
+    }
+
+    const { data: refreshedProfile } = await supabase
+      .from(TABLES.profiles)
+      .select("maintenance_kcal_current,maintenance_updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    setMaintenanceKcalCurrent(refreshedProfile?.maintenance_kcal_current != null ? Number(refreshedProfile.maintenance_kcal_current) : null);
+    setMaintenanceUpdatedAt(refreshedProfile?.maintenance_updated_at ?? null);
+    setIsSavingEnergyProfile(false);
+    setMsg("Maintenance profile updated ✅");
   }
 
   function openCropForFile(file: File) {
@@ -374,6 +465,11 @@ export default function ProfilePage() {
       return;
     }
 
+    await refreshEnergyMetricsAfterWrite({
+      source: "profile",
+      userId,
+      refreshMaintenanceCurrent: true,
+    });
     setAvatarUrl(`${nextAvatarUrl}?t=${Date.now()}`);
     setMsg("Profile photo updated ✅");
   }
@@ -420,6 +516,11 @@ export default function ProfilePage() {
       return;
     }
 
+    await refreshEnergyMetricsAfterWrite({
+      source: "profile",
+      userId,
+      refreshMaintenanceCurrent: true,
+    });
     setAvatarUrl(null);
     setMsg("Profile photo removed ✅");
   }
@@ -543,6 +644,122 @@ export default function ProfilePage() {
                 Enter at least one valid name (letters only, spaces/apostrophes/hyphens allowed).
               </p>
             )}
+          </section>
+
+          <section className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+            <h2 className="text-lg font-semibold text-white">Maintenance & BMI Inputs</h2>
+            <p className="mt-1 text-sm text-zinc-400">Used to auto-calculate maintenance calories and BMI in your existing tracking pages.</p>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="profile-sex" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                  Sex
+                </label>
+                <select
+                  id="profile-sex"
+                  value={sex}
+                  onChange={(event) => setSex(event.target.value as "male" | "female" | "other" | "")}
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                >
+                  <option value="">Select</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="profile-birth-date" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                  Birth date
+                </label>
+                <input
+                  id="profile-birth-date"
+                  type="date"
+                  value={birthDate}
+                  onChange={(event) => setBirthDate(event.target.value)}
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="profile-height-cm" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                  Height (cm)
+                </label>
+                <input
+                  id="profile-height-cm"
+                  type="number"
+                  min={1}
+                  max={300}
+                  step={0.1}
+                  value={heightCm}
+                  onChange={(event) => setHeightCm(event.target.value)}
+                  placeholder="e.g. 175"
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="profile-activity-level" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                  Activity level
+                </label>
+                <select
+                  id="profile-activity-level"
+                  value={activityLevel}
+                  onChange={(event) => setActivityLevel(event.target.value as ActivityLevel | "")}
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                >
+                  <option value="">Select</option>
+                  {ACTIVITY_LEVEL_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/50 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">Maintenance (current)</p>
+                <p className="mt-1 text-sm font-semibold text-zinc-100">
+                  {maintenanceKcalCurrent != null ? `${Math.round(maintenanceKcalCurrent).toLocaleString()} kcal` : "—"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/50 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">Last updated</p>
+                <p className="mt-1 text-sm font-semibold text-zinc-100">{maintenanceUpdatedLabel}</p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => void saveEnergyProfile()}
+                disabled={isSavingEnergyProfile || isSigningOut || isSavingName || isUploadingAvatar || isUpdatingPassword}
+                className={`rounded-xl px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:brightness-110 disabled:opacity-50 ${CLASS_GRADIENT_PRIMARY}`}
+              >
+                {isSavingEnergyProfile ? "Saving..." : "Save Maintenance Inputs"}
+              </button>
+
+              <div className="mt-4 border-t border-zinc-700/60 pt-4">
+                <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Maintenance Formula</p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/50 p-3 text-xs text-zinc-300">
+                      <p className="font-semibold text-zinc-100">BMR (Mifflin-St Jeor)</p>
+                      <p className="mt-2">Male: <span className="font-mono text-zinc-100">10*kg + 6.25*cm - 5*age + 5</span></p>
+                      <p className="mt-1">Female: <span className="font-mono text-zinc-100">10*kg + 6.25*cm - 5*age - 161</span></p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/50 p-3 text-xs text-zinc-300">
+                      <p className="font-semibold text-zinc-100">TDEE / Maintenance</p>
+                      <p className="mt-2"><span className="font-mono text-zinc-100">maintenance_kcal = BMR * activity_multiplier</span></p>
+                      <p className="mt-2 text-zinc-400">{MAINTENANCE_FORMULA_DEFINITION}</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-zinc-400">
+                    Weight source: your logged bodyweight entries are used to update maintenance over time.
+                  </p>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">

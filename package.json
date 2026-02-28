@@ -12,6 +12,7 @@
     "check": "npm run lint && npm run typecheck && npm run test",
     "db:migrate": "node scripts/db/run-plan.mjs",
     "db:check-plan": "node scripts/db/check-plan.mjs",
+    "energy:backfill-forward": "node scripts/energy/backfill-forward.mjs",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
     "e2e:install": "playwright install chromium"

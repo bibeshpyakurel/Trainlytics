@@ -37,13 +37,6 @@ function toChartData(series: StrengthTimeSeriesPoint[]) {
   }));
 }
 
-function toEnergyChartData(series: DashboardData["energyBalanceSeries"]) {
-  return series.map((point) => ({
-    ...point,
-    label: formatChartLabel(point.date),
-  }));
-}
-
 function getChartYMax(series: StrengthTimeSeriesPoint[]) {
   const max = series.length > 0 ? Math.max(...series.map((point) => point.score)) : 0;
   return Math.max(100, Math.ceil((max + 100) / 100) * 100);
@@ -304,48 +297,6 @@ export default function DashboardPage() {
               </div>
             );
           })}
-        </div>
-
-        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-          <div className="flex flex-col gap-2">
-            <h2 className="text-lg font-semibold text-white">Energy Balance Trend</h2>
-            <p className="text-sm text-zinc-400">
-              Intake vs estimated burn and net energy ({WINDOW_OPTIONS.find((option) => option.id === chartWindow)?.label} window).
-            </p>
-          </div>
-          <div className="mt-4 h-72 w-full">
-            {toEnergyChartData(data?.energyBalanceSeries ?? []).length === 0 ? (
-              <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
-                No energy balance logs yet.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={toEnergyChartData(data?.energyBalanceSeries ?? [])} margin={{ top: 8, right: 20, left: 4, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
-                  <XAxis dataKey="label" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} />
-                  <YAxis yAxisId="kcal" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} width={56} />
-                  <YAxis yAxisId="net" orientation="right" tick={{ fill: "#a1a1aa", fontSize: 12 }} tickLine={false} axisLine={{ stroke: "#52525b" }} width={56} />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null;
-                      const row = payload[0]?.payload as { date: string; intakeKcal: number | null; spendKcal: number | null; netKcal: number | null };
-                      return (
-                        <div className="rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-200 shadow-lg">
-                          <p className="font-semibold text-zinc-100">{row.date}</p>
-                          <p className="mt-1 text-zinc-300">Intake: {row.intakeKcal != null ? `${Math.round(row.intakeKcal)} kcal` : "—"}</p>
-                          <p className="text-zinc-300">Burn: {row.spendKcal != null ? `${Math.round(row.spendKcal)} kcal` : "—"}</p>
-                          <p className="mt-1 font-semibold text-amber-300">Net: {row.netKcal != null ? `${Math.round(row.netKcal)} kcal` : "—"}</p>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Line type="monotone" yAxisId="kcal" dataKey="intakeKcal" stroke="#f59e0b" strokeWidth={2.5} dot={false} connectNulls />
-                  <Line type="monotone" yAxisId="kcal" dataKey="spendKcal" stroke="#22c55e" strokeWidth={2.5} dot={false} connectNulls />
-                  <Line type="monotone" yAxisId="net" dataKey="netKcal" stroke="#38bdf8" strokeWidth={2.5} strokeDasharray="5 3" dot={false} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
         </div>
 
         <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">

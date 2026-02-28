@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import IntakePanel from "@/features/calories/intake/IntakePanel";
 import BurnPanel from "@/features/calories/burn/BurnPanel";
+import { loadLatestDailyEnergySnapshotForCurrentUser, type DailyEnergySnapshot } from "@/lib/dailyEnergyMetrics";
 
 type CaloriesTabId = "intake" | "burn";
 
@@ -21,6 +22,61 @@ const TAB_OPTIONS: Array<{ id: CaloriesTabId; label: string; subtitle: string }>
 
 export default function CaloriesPage() {
   const [selectedTab, setSelectedTab] = useState<CaloriesTabId>("intake");
+  const [energySnapshot, setEnergySnapshot] = useState<DailyEnergySnapshot | null>(null);
+  const [energyError, setEnergyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        const { snapshot, error } = await loadLatestDailyEnergySnapshotForCurrentUser();
+        setEnergyError(error);
+        setEnergySnapshot(snapshot);
+      })();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [selectedTab]);
+
+  function formatKcal(value: number | null) {
+    if (value == null || !Number.isFinite(value)) return "—";
+    return `${Math.round(value).toLocaleString()} kcal`;
+  }
+
+  const maintenanceKcal = energySnapshot?.maintenance_kcal_for_day ?? null;
+  const totalIntakeKcal = energySnapshot?.calories_in_kcal ?? null;
+  const caloriesBurnedKcal = energySnapshot?.active_calories_kcal ?? null;
+  const maintenanceVsIntakeDeltaKcal =
+    maintenanceKcal != null && totalIntakeKcal != null
+      ? maintenanceKcal - totalIntakeKcal
+      : null;
+  const isDeficit = maintenanceVsIntakeDeltaKcal != null && maintenanceVsIntakeDeltaKcal > 0;
+  const isSurplus = maintenanceVsIntakeDeltaKcal != null && maintenanceVsIntakeDeltaKcal < 0;
+  const balanceLabel = isDeficit ? "Calorie Deficit" : isSurplus ? "Calorie Surplus" : "Calorie Balance";
+  const balanceValue =
+    maintenanceVsIntakeDeltaKcal == null
+      ? null
+      : isDeficit || isSurplus
+        ? Math.abs(maintenanceVsIntakeDeltaKcal)
+        : 0;
+  const totalDeficitOrSurplusRaw =
+    maintenanceVsIntakeDeltaKcal != null && caloriesBurnedKcal != null
+      ? maintenanceVsIntakeDeltaKcal + caloriesBurnedKcal
+      : null;
+  const isTotalDeficit = totalDeficitOrSurplusRaw != null && totalDeficitOrSurplusRaw > 0;
+  const isTotalSurplus = totalDeficitOrSurplusRaw != null && totalDeficitOrSurplusRaw < 0;
+  const totalDeficitOrSurplusLabel = isTotalDeficit
+    ? "Total Calorie Deficit"
+    : isTotalSurplus
+      ? "Total Calorie Surplus"
+      : "Total Calorie Balance";
+  const totalDeficitOrSurplusValue =
+    totalDeficitOrSurplusRaw == null
+      ? null
+      : isTotalDeficit || isTotalSurplus
+        ? Math.abs(totalDeficitOrSurplusRaw)
+        : 0;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
@@ -35,6 +91,50 @@ export default function CaloriesPage() {
         <p className="mt-2 max-w-2xl text-zinc-300">
           Log intake and estimated burn to understand daily net energy and improve progress quality.
         </p>
+
+        <div className="mt-6 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-4 backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">Daily Energy Breakdown</p>
+            <p className="text-xs text-zinc-500">
+              {energySnapshot?.log_date ? `Latest: ${energySnapshot.log_date}` : "No daily snapshot yet"}
+            </p>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/55 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Maintenance</p>
+              <p className="mt-1 text-sm font-semibold text-zinc-100">{formatKcal(maintenanceKcal)}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/55 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Total Intake</p>
+              <p className="mt-1 text-sm font-semibold text-zinc-100">{formatKcal(totalIntakeKcal)}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/55 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">{balanceLabel}</p>
+              <p
+                className={`mt-1 text-sm font-semibold ${
+                  isDeficit ? "text-emerald-300" : isSurplus ? "text-amber-300" : "text-zinc-100"
+                }`}
+              >
+                {formatKcal(balanceValue)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/55 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Calories Burned</p>
+              <p className="mt-1 text-sm font-semibold text-zinc-100">{formatKcal(caloriesBurnedKcal)}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/55 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">{totalDeficitOrSurplusLabel}</p>
+              <p
+                className={`mt-1 text-sm font-semibold ${
+                  isTotalDeficit ? "text-emerald-300" : isTotalSurplus ? "text-amber-300" : "text-zinc-100"
+                }`}
+              >
+                {formatKcal(totalDeficitOrSurplusValue)}
+              </p>
+            </div>
+          </div>
+          {energyError && <p className="mt-2 text-xs text-red-300">{energyError}</p>}
+        </div>
 
         <div className="mt-6 rounded-2xl border border-zinc-700/80 bg-zinc-900/70 p-2 backdrop-blur-sm">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">

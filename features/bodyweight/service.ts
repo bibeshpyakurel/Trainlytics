@@ -3,6 +3,21 @@ import { supabase } from "@/lib/supabaseClient";
 import type { BodyweightLog, PendingOverwrite } from "@/features/bodyweight/types";
 import { TABLES } from "@/lib/dbNames";
 import { getCurrentUserIdFromSession } from "@/lib/authSession";
+import { refreshEnergyMetricsAfterWrite } from "@/lib/dailyEnergyMetrics";
+
+async function getExistingBodyweightLogDateSafe(userId: string, logId: string | number) {
+  try {
+    const { data } = await supabase
+      .from(TABLES.bodyweightLogs)
+      .select("log_date")
+      .eq("id", String(logId))
+      .eq("user_id", userId)
+      .maybeSingle();
+    return data?.log_date ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function loadBodyweightLogsForCurrentUser(): Promise<{
   logs: BodyweightLog[];
@@ -31,6 +46,13 @@ export async function loadBodyweightLogsForCurrentUser(): Promise<{
 }
 
 export async function upsertBodyweightEntry(payload: PendingOverwrite): Promise<string | null> {
+  if (!Number.isFinite(payload.weightNum) || payload.weightNum <= 0) {
+    return "Weight must be a valid number greater than 0.";
+  }
+  if (payload.inputUnit !== "kg" && payload.inputUnit !== "lb") {
+    return "Weight unit must be kg or lb.";
+  }
+
   const { error } = await supabase
     .from(TABLES.bodyweightLogs)
     .upsert(
@@ -44,7 +66,14 @@ export async function upsertBodyweightEntry(payload: PendingOverwrite): Promise<
       { onConflict: "user_id,log_date" }
     );
 
-  return error ? error.message : null;
+  if (error) return error.message;
+  await refreshEnergyMetricsAfterWrite({
+    source: "bodyweight",
+    userId: payload.userId,
+    touchedDates: [payload.logDate],
+    refreshMaintenanceCurrent: true,
+  });
+  return null;
 }
 
 export async function bodyweightEntryExistsForDate(
@@ -81,6 +110,8 @@ export async function deleteBodyweightLogForCurrentUser(
     return { deleted: false, error: "Not logged in." };
   }
 
+  const existingLogDate = await getExistingBodyweightLogDateSafe(userId, logId);
+
   const { error } = await supabase
     .from(TABLES.bodyweightLogs)
     .delete()
@@ -91,6 +122,20 @@ export async function deleteBodyweightLogForCurrentUser(
     return { deleted: false, error: error.message };
   }
 
+  if (existingLogDate) {
+    await refreshEnergyMetricsAfterWrite({
+      source: "bodyweight",
+      userId,
+      touchedDates: [existingLogDate],
+      refreshMaintenanceCurrent: true,
+    });
+    return { deleted: true, error: null };
+  }
+  await refreshEnergyMetricsAfterWrite({
+    source: "bodyweight",
+    userId,
+    refreshMaintenanceCurrent: true,
+  });
   return { deleted: true, error: null };
 }
 
@@ -111,6 +156,15 @@ export async function updateBodyweightLogForCurrentUser(
     return "Not logged in.";
   }
 
+  if (!Number.isFinite(payload.weightNum) || payload.weightNum <= 0) {
+    return "Weight must be a valid number greater than 0.";
+  }
+  if (payload.inputUnit !== "kg" && payload.inputUnit !== "lb") {
+    return "Weight unit must be kg or lb.";
+  }
+
+  const existingLogDate = await getExistingBodyweightLogDateSafe(userId, logId);
+
   const { error } = await supabase
     .from(TABLES.bodyweightLogs)
     .update({
@@ -122,5 +176,16 @@ export async function updateBodyweightLogForCurrentUser(
     .eq("id", String(logId))
     .eq("user_id", userId);
 
-  return error ? error.message : null;
+  if (error) return error.message;
+
+  const touchedDates = existingLogDate && existingLogDate !== payload.logDate
+    ? [existingLogDate, payload.logDate]
+    : [payload.logDate];
+  await refreshEnergyMetricsAfterWrite({
+    source: "bodyweight",
+    userId,
+    touchedDates,
+    refreshMaintenanceCurrent: true,
+  });
+  return null;
 }

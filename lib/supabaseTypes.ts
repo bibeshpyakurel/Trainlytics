@@ -72,6 +72,51 @@ export type Database = {
         };
         Relationships: [];
       };
+      daily_energy_metrics: {
+        Row: {
+          active_calories_kcal: number | null;
+          bmi: number | null;
+          calories_in_kcal: number | null;
+          created_at: string;
+          id: string;
+          log_date: string;
+          maintenance_kcal_for_day: number | null;
+          net_calories_kcal: number | null;
+          total_burn_kcal: number | null;
+          updated_at: string;
+          user_id: string;
+          weight_kg: number | null;
+        };
+        Insert: {
+          active_calories_kcal?: number | null;
+          bmi?: number | null;
+          calories_in_kcal?: number | null;
+          created_at?: string;
+          id?: string;
+          log_date: string;
+          maintenance_kcal_for_day?: number | null;
+          net_calories_kcal?: number | null;
+          total_burn_kcal?: number | null;
+          updated_at?: string;
+          user_id: string;
+          weight_kg?: number | null;
+        };
+        Update: {
+          active_calories_kcal?: number | null;
+          bmi?: number | null;
+          calories_in_kcal?: number | null;
+          created_at?: string;
+          id?: string;
+          log_date?: string;
+          maintenance_kcal_for_day?: number | null;
+          net_calories_kcal?: number | null;
+          total_burn_kcal?: number | null;
+          updated_at?: string;
+          user_id?: string;
+          weight_kg?: number | null;
+        };
+        Relationships: [];
+      };
       metabolic_activity_logs: {
         Row: {
           created_at: string;
@@ -140,26 +185,47 @@ export type Database = {
       };
       profiles: {
         Row: {
+          activity_level: Database["public"]["Enums"]["activity_level_type"] | null;
           avatar_url: string | null;
+          birth_date: string | null;
           created_at: string;
           first_name: string | null;
+          height_cm: number | null;
           last_name: string | null;
+          maintenance_kcal_current: number | null;
+          maintenance_method: Database["public"]["Enums"]["maintenance_method_type"] | null;
+          maintenance_updated_at: string | null;
+          sex: Database["public"]["Enums"]["profile_sex_type"] | null;
           updated_at: string;
           user_id: string;
         };
         Insert: {
+          activity_level?: Database["public"]["Enums"]["activity_level_type"] | null;
           avatar_url?: string | null;
+          birth_date?: string | null;
           created_at?: string;
           first_name?: string | null;
+          height_cm?: number | null;
           last_name?: string | null;
+          maintenance_kcal_current?: number | null;
+          maintenance_method?: Database["public"]["Enums"]["maintenance_method_type"] | null;
+          maintenance_updated_at?: string | null;
+          sex?: Database["public"]["Enums"]["profile_sex_type"] | null;
           updated_at?: string;
           user_id: string;
         };
         Update: {
+          activity_level?: Database["public"]["Enums"]["activity_level_type"] | null;
           avatar_url?: string | null;
+          birth_date?: string | null;
           created_at?: string;
           first_name?: string | null;
+          height_cm?: number | null;
           last_name?: string | null;
+          maintenance_kcal_current?: number | null;
+          maintenance_method?: Database["public"]["Enums"]["maintenance_method_type"] | null;
+          maintenance_updated_at?: string | null;
+          sex?: Database["public"]["Enums"]["profile_sex_type"] | null;
           updated_at?: string;
           user_id?: string;
         };
@@ -238,7 +304,10 @@ export type Database = {
     Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: {
+      activity_level_type: "sedentary" | "light" | "moderate" | "very_active" | "extra_active";
       exercise_metric_type: "WEIGHTED_REPS" | "DURATION";
+      maintenance_method_type: "mifflin_st_jeor_activity_multiplier";
+      profile_sex_type: "male" | "female" | "other";
       split_type: "push" | "pull" | "legs" | "core";
       unit_type: "kg" | "lb";
     };

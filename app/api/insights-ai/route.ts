@@ -4,13 +4,16 @@ import { jsonError } from "@/lib/apiResponse";
 import { getInsightsAiEnv } from "@/lib/env.server";
 import { logServerError } from "@/lib/monitoring";
 import { loadInsightsAiContextForUser } from "@/lib/insightsAiContext.server";
+import {
+  buildInsightsSystemPrompt,
+  type AssistantOutputMode,
+  type AssistantTone,
+} from "@/lib/insightsAiPrompt";
 
 type ChatMessage = {
   role: "user" | "assistant";
   text: string;
 };
-type AssistantTone = "coach" | "technical" | "plain";
-type AssistantOutputMode = "default" | "fitness_structured";
 
 const MAX_REQUEST_BODY_BYTES = 24 * 1024;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 90_000;
@@ -173,18 +176,8 @@ export async function POST(request: Request) {
       body.tone === "technical" || body.tone === "plain" || body.tone === "coach"
         ? body.tone
         : "coach";
-    const toneInstruction =
-      tone === "technical"
-        ? "Tone mode: Technical. Use precise terminology, concise reasoning, and explicit assumptions."
-        : tone === "plain"
-          ? "Tone mode: Plain English. Use simple language, short sentences, and avoid jargon."
-          : "Tone mode: Coach. Be motivational but practical, with clear next steps.";
     const outputMode: AssistantOutputMode =
       body.outputMode === "fitness_structured" ? "fitness_structured" : "default";
-    const outputModeInstruction =
-      outputMode === "fitness_structured"
-        ? "Output mode: Fitness structured. Format every answer with exactly three labeled sections: Key insight, Risk, Next workout action."
-        : "For longer responses, format with exactly three labeled sections: Summary, Details, Action Plan.";
 
     const userContext = await loadInsightsAiContextForUser(supabase, user.id);
     const history = (body.history ?? [])
@@ -193,23 +186,11 @@ export async function POST(request: Request) {
       .filter((item) => item.text.length > 0)
       .slice(-8);
 
-    const systemPrompt = [
-      "You are an insights coach for a Trainlytics app.",
-      userContext.firstName ? `The athlete's first name is ${userContext.firstName}.` : "",
-      "You MUST answer using only the provided user context data.",
-      "Use yearlyRawLogs and yearlyTimeline for detailed personal-history questions across workouts, bodyweight, calories, burn, net energy, and strength.",
-      "For date-specific questions (for example 'what workout did I do on 2026-02-02?'), use yearlyTimeline.workoutSessions and yearlyTimeline.dailyMetrics.",
-      "For month-specific average questions (for example February 2026), use monthlyAverages when available.",
-      "For 'first/last calories log' questions, use calorieCoverage.firstLogDate and calorieCoverage.lastLogDate.",
-      "Whenever answering about bodyweight, include BOTH kg and lb values when data exists.",
-      "If data is missing or insufficient, say so clearly.",
-      "Be concise, practical, and action-oriented.",
-      toneInstruction,
-      outputModeInstruction,
-      "Default to short answers. Do not include every possible detail unless the user asks for deep detail.",
-      "When useful, provide up to 3 bullets.",
-      "Do not fabricate metrics or dates.",
-    ].join(" ");
+    const systemPrompt = buildInsightsSystemPrompt({
+      firstName: userContext.firstName,
+      tone,
+      outputMode,
+    });
 
     const contextPrompt = [
       "User context data:",
