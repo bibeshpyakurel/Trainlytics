@@ -467,18 +467,16 @@ export default function InsightsPage() {
 
   const weightVsNetOverlayData = useMemo(() => {
     const netRolling7 = computeRollingAverageByDate(filteredSeries.netEnergySeries, 7);
-    const netRollingByDate = new Map(
-      netRolling7
-        .filter((point) => point.sampleSize >= 3)
-        .map((point) => [point.date, point.value] as const)
-    );
+    const netRollingByDate = new Map<string, number>();
     const netRollingShiftedByDate = new Map<string, number>();
     for (const point of netRolling7) {
-      if (point.sampleSize < 3) continue;
+      const value = point.value;
+      if (point.sampleSize < 3 || value == null) continue;
+      netRollingByDate.set(point.date, value);
       const shiftedDate = addDays(parseIsoDate(point.date), 3)
         .toISOString()
         .slice(0, 10);
-      netRollingShiftedByDate.set(shiftedDate, point.value);
+      netRollingShiftedByDate.set(shiftedDate, value);
     }
 
     const byDate = new Map<
