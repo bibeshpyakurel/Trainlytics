@@ -20,13 +20,16 @@ import { STORAGE_KEYS } from "@/lib/preferences";
 import { API_ROUTES, ROUTES, buildLoginRedirectPath } from "@/lib/routes";
 
 type AssistantMessage = { role: "user" | "assistant"; text: string };
+type AssistantSection = { title: string; content: string };
+type AssistantTone = "coach" | "technical" | "plain";
+type AssistantOutputMode = "default" | "fitness_structured";
 
 type BrowserSpeechRecognition = {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onerror: (() => void) | null;
+  onresult: ((event: { results: ArrayLike<{ isFinal?: boolean } & ArrayLike<{ transcript: string }>>; resultIndex?: number }) => void) | null;
+  onerror: ((event?: { error?: string }) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop?: () => void;
@@ -37,7 +40,6 @@ const QUICK_PROMPTS = [
   "How are calories affecting my strength lately?",
   "What should I improve this week?",
   "Summarize my top achievement this month",
-  "Is my bodyweight trend healthy with my strength trend?",
 ];
 
 const RANGE_OPTIONS = [
@@ -56,13 +58,6 @@ type TrendMetricConfig = {
   label: string;
   unit: string;
   targetLogsPerWeek: number;
-};
-
-type SuggestedAction = {
-  id: string;
-  title: string;
-  reason: string;
-  plan: string[];
 };
 
 type DrilldownEntry = {
@@ -89,8 +84,28 @@ const TREND_METRICS: TrendMetricConfig[] = [
   { id: "strength", label: "Strength", unit: "score", targetLogsPerWeek: 3 },
 ];
 
-const VOICE_IDLE_STOP_MS = 5_000;
 const VOICE_RESTART_DELAY_MS = 180;
+const FOLLOW_UP_SOURCE_MAX_CHARS = 1_200;
+const STREAM_REVEAL_TICK_MIN_MS = 18;
+const STREAM_REVEAL_TICK_MAX_MS = 28;
+const STREAM_REVEAL_BASE_CHARS_PER_TICK = 1;
+const STREAM_REVEAL_MAX_CHARS_PER_TICK = 4;
+const STREAM_REVEAL_BOOST_MAX_CHARS_PER_TICK = 7;
+const STREAM_REVEAL_BOOST_QUEUE_THRESHOLD = 200;
+const STREAM_COMPLETION_FORMAT_DELAY_MS = 180;
+const AUTO_SCROLL_PAUSE_THRESHOLD_PX = 80;
+const AUTO_SCROLL_RESUME_THRESHOLD_PX = 24;
+const ASSISTANT_TONE_STORAGE_KEY = "insights_assistant_tone";
+const ASSISTANT_TONE_OPTIONS: Array<{ id: AssistantTone; label: string }> = [
+  { id: "coach", label: "Coach" },
+  { id: "technical", label: "Technical" },
+  { id: "plain", label: "Plain English" },
+];
+const ASSISTANT_OUTPUT_MODE_STORAGE_KEY = "insights_assistant_output_mode";
+const ASSISTANT_OUTPUT_MODE_OPTIONS: Array<{ id: AssistantOutputMode; label: string }> = [
+  { id: "default", label: "Default" },
+  { id: "fitness_structured", label: "Fitness Structured" },
+];
 
 function filterSeriesByRange(series: InsightMetricPoint[], days: number | null): InsightMetricPoint[] {
   if (days == null) return series;
@@ -243,14 +258,6 @@ function getCorrelationConfidence(overlapDays: number) {
   };
 }
 
-function actionTitleFromText(text: string) {
-  if (/bodyweight|weigh/i.test(text)) return "Bodyweight Logging Plan";
-  if (/calories|fuel/i.test(text)) return "Fueling Consistency Plan";
-  if (/strength|workout|deload|recovery/i.test(text)) return "Strength Progression Plan";
-  if (/correlation|overlap/i.test(text)) return "Data Quality Plan";
-  return "Performance Improvement Plan";
-}
-
 function formatEntryDate(dateIso: string) {
   return new Date(`${dateIso}T00:00:00`).toLocaleDateString(undefined, {
     year: "numeric",
@@ -297,27 +304,140 @@ function getLastUserMessageIndex(messages: AssistantMessage[]) {
   return -1;
 }
 
+function splitAssistantSections(text: string): AssistantSection[] | null {
+  const normalized = text.trim();
+  if (!normalized) return null;
+
+  const isLong = normalized.length >= 280 || normalized.split("\n").length >= 6;
+  if (!isLong) return null;
+
+  const defaultSectionTitles = ["Summary", "Details", "Action Plan"];
+  const fitnessSectionTitles = ["Key insight", "Risk", "Next workout action"];
+  const headingRegex =
+    /^\s{0,3}(?:#{1,3}\s*)?(Summary|Details|Action Plan|Key insight|Risk|Next workout action)\s*:?\s*$/i;
+  const lines = normalized.split("\n");
+  const sectionsFromHeadings = new Map<string, string[]>();
+  let currentTitle: string | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const headingMatch = line.match(headingRegex);
+    if (headingMatch) {
+      const matched = headingMatch[1].toLowerCase();
+      currentTitle = matched === "summary"
+        ? "Summary"
+        : matched === "details"
+          ? "Details"
+          : matched === "action plan"
+            ? "Action Plan"
+            : matched === "key insight"
+              ? "Key insight"
+              : matched === "risk"
+                ? "Risk"
+                : "Next workout action";
+      if (!sectionsFromHeadings.has(currentTitle)) {
+        sectionsFromHeadings.set(currentTitle, []);
+      }
+      continue;
+    }
+
+    if (currentTitle) {
+      sectionsFromHeadings.get(currentTitle)?.push(line);
+    }
+  }
+
+  if (sectionsFromHeadings.size >= 2) {
+    const sectionTitles = sectionsFromHeadings.has("Key insight")
+      ? fitnessSectionTitles
+      : defaultSectionTitles;
+    const resolved = sectionTitles.map((title) => ({
+      title,
+      content: (sectionsFromHeadings.get(title) ?? []).join("\n").trim(),
+    }));
+    return resolved.filter((section) => section.content.length > 0);
+  }
+
+  const paragraphs = normalized.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean);
+  if (paragraphs.length >= 3) {
+    return [
+      { title: "Summary", content: paragraphs[0] },
+      { title: "Details", content: paragraphs.slice(1, -1).join("\n\n") },
+      { title: "Action Plan", content: paragraphs[paragraphs.length - 1] },
+    ].filter((section) => section.content.length > 0);
+  }
+
+  const sentences = normalized.match(/[^.!?]+[.!?]*/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
+  if (sentences.length >= 6) {
+    const summary = sentences.slice(0, 2).join(" ");
+    const details = sentences.slice(2, -2).join(" ");
+    const actionPlan = sentences.slice(-2).join(" ");
+    return [
+      { title: "Summary", content: summary },
+      { title: "Details", content: details },
+      { title: "Action Plan", content: actionPlan },
+    ].filter((section) => section.content.length > 0);
+  }
+
+  return null;
+}
+
 export default function InsightsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [data, setData] = useState<InsightsData | null>(null);
   const [question, setQuestion] = useState("");
+  const [questionInterim, setQuestionInterim] = useState("");
   const [assistantThread, setAssistantThread] = useState<AssistantMessage[]>([]);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
+  const [isAutoScrollPinned, setIsAutoScrollPinned] = useState(true);
+  const [assistantTone, setAssistantTone] = useState<AssistantTone>("coach");
+  const [assistantOutputMode, setAssistantOutputMode] = useState<AssistantOutputMode>("default");
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(false);
   const [selectedRange, setSelectedRange] = useState<RangeOptionId>("7d");
-  const [copiedActionId, setCopiedActionId] = useState<string | null>(null);
   const [drilldown, setDrilldown] = useState<DrilldownState | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>("index");
   const [threadHydrated, setThreadHydrated] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const speechFrameRef = useRef<number | null>(null);
+  const pendingSpeechFinalRef = useRef("");
+  const pendingSpeechInterimRef = useRef("");
   const keepListeningRef = useRef(false);
   const voiceStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const assistantAbortRef = useRef<AbortController | null>(null);
+  const stopGenerationRequestedRef = useRef(false);
+  const formatSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoScrollPinnedRef = useRef(true);
+  const isProgrammaticScrollRef = useRef(false);
+  const [deferLastAssistantFormatting, setDeferLastAssistantFormatting] = useState(false);
+
+  function setAutoScrollPinned(nextValue: boolean) {
+    autoScrollPinnedRef.current = nextValue;
+    setIsAutoScrollPinned(nextValue);
+  }
+
+  function scrollChatToBottom(smooth: boolean) {
+    const container = chatScrollRef.current;
+    if (!container) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    if (!smooth && distanceFromBottom <= 1) return;
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({ top: scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false;
+      });
+      return;
+    }
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 0);
+  }
 
   function clearVoiceStopTimer() {
     const timer = voiceStopTimerRef.current;
@@ -327,9 +447,47 @@ export default function InsightsPage() {
     }
   }
 
+  function clearFormatSwapTimer() {
+    const timer = formatSwapTimerRef.current;
+    if (timer != null) {
+      clearTimeout(timer);
+      formatSwapTimerRef.current = null;
+    }
+  }
+
+  function cancelSpeechFrame() {
+    if (typeof window === "undefined") return;
+    if (speechFrameRef.current != null) {
+      window.cancelAnimationFrame(speechFrameRef.current);
+      speechFrameRef.current = null;
+    }
+  }
+
+  function flushPendingSpeechUpdates() {
+    const pendingFinal = pendingSpeechFinalRef.current.trim();
+    const pendingInterim = pendingSpeechInterimRef.current;
+    pendingSpeechFinalRef.current = "";
+    pendingSpeechInterimRef.current = "";
+
+    if (pendingFinal) {
+      setQuestion((prev) => (prev ? `${prev} ${pendingFinal}` : pendingFinal));
+    }
+    setQuestionInterim(pendingInterim);
+  }
+
+  function scheduleSpeechFrame() {
+    if (typeof window === "undefined" || speechFrameRef.current != null) return;
+    speechFrameRef.current = window.requestAnimationFrame(() => {
+      speechFrameRef.current = null;
+      flushPendingSpeechUpdates();
+    });
+  }
+
   function stopVoiceInput(options?: { reason?: string }) {
     keepListeningRef.current = false;
     clearVoiceStopTimer();
+    cancelSpeechFrame();
+    flushPendingSpeechUpdates();
 
     const activeRecognition = recognitionRef.current;
     recognitionRef.current = null;
@@ -343,16 +501,10 @@ export default function InsightsPage() {
     }
 
     setIsListening(false);
+    setQuestionInterim("");
     if (options?.reason) {
       setAssistantError(options.reason);
     }
-  }
-
-  function scheduleVoiceStop() {
-    clearVoiceStopTimer();
-    voiceStopTimerRef.current = setTimeout(() => {
-      stopVoiceInput();
-    }, VOICE_IDLE_STOP_MS);
   }
 
   useEffect(() => {
@@ -456,25 +608,6 @@ export default function InsightsPage() {
       overallAdherence,
     };
   }, [filteredSeries, selectedRangeConfig.days]);
-
-  const suggestedActions = useMemo<SuggestedAction[]>(() => {
-    const sourceItems = [...rangeInsights.improvements, ...rangeInsights.suggestions].slice(0, 4);
-    return sourceItems.map((item, index) => {
-      const title = actionTitleFromText(item);
-      const rangeText = selectedRangeConfig.label === "All" ? "all time" : `last ${selectedRangeConfig.label}`;
-      return {
-        id: `action-${index}`,
-        title,
-        reason: item,
-        plan: [
-          `Focus window: ${rangeText}`,
-          "Goal: improve signal quality and performance outcomes",
-          `Action: ${item}`,
-          "Review checkpoint: re-evaluate trend decomposition after 7 days",
-        ],
-      };
-    });
-  }, [rangeInsights.improvements, rangeInsights.suggestions, selectedRangeConfig.label]);
 
   const coachingItems = useMemo<CoachingItem[]>(() => {
     const items: CoachingItem[] = [];
@@ -647,6 +780,13 @@ export default function InsightsPage() {
     if (!data?.email) return null;
     return `insights_thread_session_${data.email.trim().toLowerCase()}`;
   }, [data?.email]);
+  const visibleQuestion = useMemo(() => {
+    const finalTranscript = question.trim();
+    const interimTranscript = questionInterim.trim();
+    if (!interimTranscript) return question;
+    if (!finalTranscript) return questionInterim;
+    return `${question} ${questionInterim}`.trim();
+  }, [question, questionInterim]);
 
   const canRegenerate = useMemo(() => {
     if (assistantLoading) return false;
@@ -667,11 +807,41 @@ export default function InsightsPage() {
     if (savedSpeakReplies != null) {
       setSpeakReplies(savedSpeakReplies === "true");
     }
+    const savedTone = localStorage.getItem(ASSISTANT_TONE_STORAGE_KEY);
+    if (savedTone === "coach" || savedTone === "technical" || savedTone === "plain") {
+      setAssistantTone(savedTone);
+    }
+    const savedOutputMode = localStorage.getItem(ASSISTANT_OUTPUT_MODE_STORAGE_KEY);
+    if (savedOutputMode === "default" || savedOutputMode === "fitness_structured") {
+      setAssistantOutputMode(savedOutputMode);
+    }
 
     return () => {
+      assistantAbortRef.current?.abort();
+      assistantAbortRef.current = null;
+      clearFormatSwapTimer();
       stopVoiceInput();
     };
   }, []);
+
+  useEffect(() => {
+    if (assistantLoading) {
+      clearFormatSwapTimer();
+      setDeferLastAssistantFormatting(true);
+      return;
+    }
+
+    const lastMessage = assistantThread[assistantThread.length - 1];
+    if (lastMessage?.role !== "assistant" || !deferLastAssistantFormatting) {
+      return;
+    }
+
+    clearFormatSwapTimer();
+    formatSwapTimerRef.current = setTimeout(() => {
+      setDeferLastAssistantFormatting(false);
+      formatSwapTimerRef.current = null;
+    }, STREAM_COMPLETION_FORMAT_DELAY_MS);
+  }, [assistantLoading, assistantThread, deferLastAssistantFormatting]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -713,8 +883,30 @@ export default function InsightsPage() {
   useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-  }, [assistantThread, assistantLoading]);
+
+    const onScroll = () => {
+      if (isProgrammaticScrollRef.current) return;
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+
+      if (distanceFromBottom > AUTO_SCROLL_PAUSE_THRESHOLD_PX && autoScrollPinnedRef.current) {
+        setAutoScrollPinned(false);
+      } else if (distanceFromBottom <= AUTO_SCROLL_RESUME_THRESHOLD_PX && !autoScrollPinnedRef.current) {
+        setAutoScrollPinned(true);
+      }
+    };
+
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoScrollPinned) return;
+    if (assistantLoading) return;
+    scrollChatToBottom(true);
+  }, [assistantThread, assistantLoading, isAutoScrollPinned]);
 
   function speak(text: string) {
     if (typeof window === "undefined" || !window.speechSynthesis || !speakReplies) return;
@@ -738,31 +930,74 @@ export default function InsightsPage() {
 
     keepListeningRef.current = true;
     setAssistantError(null);
-    scheduleVoiceStop();
+    setQuestionInterim("");
+    clearVoiceStopTimer();
 
     const startRecognition = () => {
       if (!keepListeningRef.current) return;
+      let transientRestartScheduled = false;
 
       const recognition = new speechRecognitionCtor();
       recognitionRef.current = recognition;
       recognition.lang = "en-US";
-      recognition.interimResults = false;
+      recognition.interimResults = true;
       recognition.continuous = true;
       recognition.onresult = (event) => {
-        const lastIndex = event.results.length - 1;
-        const transcript = event.results?.[lastIndex]?.[0]?.transcript?.trim();
-        if (transcript) {
-          scheduleVoiceStop();
-          setQuestion((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        const startIndex = event.resultIndex ?? 0;
+        let appendedFinal = "";
+        const interimParts: string[] = [];
+
+        for (let index = startIndex; index < event.results.length; index += 1) {
+          const result = event.results?.[index];
+          const transcript = result?.[0]?.transcript?.trim();
+          if (!transcript) continue;
+          if (result.isFinal) {
+            appendedFinal = appendedFinal ? `${appendedFinal} ${transcript}` : transcript;
+          } else {
+            interimParts.push(transcript);
+          }
         }
+        if (appendedFinal) {
+          pendingSpeechFinalRef.current = pendingSpeechFinalRef.current
+            ? `${pendingSpeechFinalRef.current} ${appendedFinal}`
+            : appendedFinal;
+        }
+        pendingSpeechInterimRef.current = interimParts.join(" ").trim();
+        scheduleSpeechFrame();
       };
-      recognition.onerror = () => {
-        stopVoiceInput({ reason: "Voice input failed. Please try again." });
+      recognition.onerror = (event) => {
+        const errorCode = event?.error ?? "unknown";
+        if (errorCode === "not-allowed" || errorCode === "service-not-allowed") {
+          stopVoiceInput({ reason: "Microphone access is blocked. Please allow mic permission and try again." });
+          return;
+        }
+        setAssistantError("Voice input had a brief hiccup. Reconnecting...");
+        if (!keepListeningRef.current || transientRestartScheduled) return;
+        transientRestartScheduled = true;
+        if (recognitionRef.current === recognition) {
+          recognitionRef.current = null;
+        }
+        try {
+          recognition.abort?.();
+        } catch {
+          // Ignore abort errors during transient reconnect.
+        }
+        setTimeout(() => {
+          if (keepListeningRef.current) {
+            startRecognition();
+          }
+        }, VOICE_RESTART_DELAY_MS);
       };
       recognition.onend = () => {
         if (recognitionRef.current === recognition) {
           recognitionRef.current = null;
         }
+        if (transientRestartScheduled) {
+          return;
+        }
+        cancelSpeechFrame();
+        flushPendingSpeechUpdates();
+        setQuestionInterim("");
         if (!keepListeningRef.current) {
           setIsListening(false);
           return;
@@ -785,6 +1020,14 @@ export default function InsightsPage() {
     startRecognition();
   }
 
+  function stopAssistantGeneration() {
+    const activeController = assistantAbortRef.current;
+    if (!activeController) return;
+    stopGenerationRequestedRef.current = true;
+    activeController.abort();
+    assistantAbortRef.current = null;
+  }
+
   async function requestAssistantAnswer(
     prompt: string,
     historyBeforePrompt: AssistantMessage[],
@@ -792,9 +1035,14 @@ export default function InsightsPage() {
   ) {
     setAssistantError(null);
     setAssistantLoading(true);
-    setAssistantThread(nextThread);
+    setAssistantThread([...nextThread, { role: "assistant", text: "" }]);
+    let isStreaming = true;
+    stopGenerationRequestedRef.current = false;
 
     try {
+      const controller = new AbortController();
+      assistantAbortRef.current = controller;
+
       const response = await fetch(API_ROUTES.insightsAi, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -802,19 +1050,160 @@ export default function InsightsPage() {
           question: prompt,
           context: aiContext,
           history: historyBeforePrompt,
+          tone: assistantTone,
+          outputMode: assistantOutputMode,
         }),
+        signal: controller.signal,
       });
 
-      const responseData = (await response.json()) as { answer?: string; error?: string };
-      if (!response.ok || !responseData.answer) {
-        throw new Error(responseData.error ?? "Failed to get AI response.");
+      if (!response.ok) {
+        let responseMessage = "Failed to get AI response.";
+        try {
+          const responseData = (await response.json()) as { answer?: string; error?: string };
+          if (responseData.error) {
+            responseMessage = responseData.error;
+          }
+        } catch {
+          // Keep fallback message when provider body is unavailable.
+        }
+        throw new Error(responseMessage);
       }
 
-      setAssistantThread([...nextThread, { role: "assistant", text: responseData.answer ?? "" }]);
-      speak(responseData.answer);
+      if (!response.body) {
+        throw new Error("AI provider returned an empty stream.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let visibleText = "";
+      let sseBuffer = "";
+      let rawQueue = "";
+      isStreaming = true;
+
+      const getRevealTickMs = (queueLength: number) => {
+        if (queueLength >= 420) return STREAM_REVEAL_TICK_MIN_MS;
+        if (queueLength >= 240) return 20;
+        if (queueLength >= 100) return 22;
+        return STREAM_REVEAL_TICK_MAX_MS;
+      };
+
+      const nextFrame = () => new Promise<number>((resolve) => {
+        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+          window.requestAnimationFrame((timestamp) => resolve(timestamp));
+          return;
+        }
+        setTimeout(() => resolve(Date.now()), STREAM_REVEAL_TICK_MIN_MS);
+      });
+
+      const revealLoop = (async () => {
+        let lastRevealAt = 0;
+        while (isStreaming || rawQueue.length > 0) {
+          const frameAt = await nextFrame();
+          if (stopGenerationRequestedRef.current) {
+            rawQueue = "";
+            isStreaming = false;
+          }
+          if (rawQueue.length > 0) {
+            const tickMs = getRevealTickMs(rawQueue.length);
+            if (lastRevealAt !== 0 && frameAt - lastRevealAt < tickMs) {
+              continue;
+            }
+            lastRevealAt = frameAt;
+            const queueBoost = rawQueue.length > STREAM_REVEAL_BOOST_QUEUE_THRESHOLD
+              ? Math.ceil((rawQueue.length - STREAM_REVEAL_BOOST_QUEUE_THRESHOLD) / 160)
+              : 0;
+            const charsThisTick = Math.min(
+              rawQueue.length > 260 ? STREAM_REVEAL_BOOST_MAX_CHARS_PER_TICK : STREAM_REVEAL_MAX_CHARS_PER_TICK,
+              STREAM_REVEAL_BASE_CHARS_PER_TICK + queueBoost
+            );
+            const nextSlice = rawQueue.slice(0, charsThisTick);
+            rawQueue = rawQueue.slice(charsThisTick);
+            visibleText += nextSlice;
+            setAssistantThread([...nextThread, { role: "assistant", text: visibleText }]);
+            if (autoScrollPinnedRef.current) {
+              scrollChatToBottom(false);
+            }
+          }
+        }
+      })();
+
+      const flushSseEvents = () => {
+        let separatorIndex = sseBuffer.indexOf("\n\n");
+        while (separatorIndex >= 0) {
+          const rawEvent = sseBuffer.slice(0, separatorIndex);
+          sseBuffer = sseBuffer.slice(separatorIndex + 2);
+
+          const dataLines = rawEvent
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart());
+
+          const eventData = dataLines.join("");
+          if (!eventData || eventData === "[DONE]") {
+            separatorIndex = sseBuffer.indexOf("\n\n");
+            continue;
+          }
+
+          try {
+            const parsed = JSON.parse(eventData) as {
+              error?: { message?: string };
+              choices?: Array<{ delta?: { content?: string } }>;
+            };
+            if (parsed.error?.message) {
+              throw new Error(parsed.error.message);
+            }
+
+            const deltaText = parsed.choices?.[0]?.delta?.content;
+            if (!stopGenerationRequestedRef.current && typeof deltaText === "string" && deltaText.length > 0) {
+              rawQueue += deltaText;
+            }
+          } catch (error) {
+            if (error instanceof Error) {
+              throw error;
+            }
+          }
+
+          separatorIndex = sseBuffer.indexOf("\n\n");
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+        flushSseEvents();
+      }
+      sseBuffer += decoder.decode();
+      flushSseEvents();
+      isStreaming = false;
+      await revealLoop;
+      if (autoScrollPinnedRef.current) {
+        scrollChatToBottom(true);
+      }
+
+      const finalAnswer = visibleText.trim();
+      if (!finalAnswer) {
+        throw new Error("AI returned an empty response.");
+      }
+
+      setAssistantThread([...nextThread, { role: "assistant", text: finalAnswer }]);
+      speak(finalAnswer);
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        setAssistantThread((current) => {
+          const lastMessage = current[current.length - 1];
+          if (lastMessage?.role === "assistant" && lastMessage.text.trim().length === 0) {
+            return current.slice(0, -1);
+          }
+          return current;
+        });
+        return;
+      }
       setAssistantError(error instanceof Error ? error.message : "Failed to get AI response.");
     } finally {
+      isStreaming = false;
+      assistantAbortRef.current = null;
+      stopGenerationRequestedRef.current = false;
       setAssistantLoading(false);
     }
   }
@@ -822,12 +1211,15 @@ export default function InsightsPage() {
   async function askInsightsAssistant() {
     if (assistantLoading) return;
 
-    const trimmed = question.trim();
+    const trimmed = visibleQuestion.trim();
     if (!trimmed || !data || !aiContext) return;
 
     const historyBeforePrompt = assistantThread;
     const nextThread: AssistantMessage[] = [...historyBeforePrompt, { role: "user", text: trimmed }];
+    setAutoScrollPinned(true);
+    scrollChatToBottom(true);
     setQuestion("");
+    setQuestionInterim("");
     await requestAssistantAnswer(trimmed, historyBeforePrompt, nextThread);
   }
 
@@ -848,11 +1240,33 @@ export default function InsightsPage() {
 
     const historyBeforePrompt = assistantThread.slice(0, lastUserIndex);
     const nextThread: AssistantMessage[] = [...historyBeforePrompt, { role: "user", text: userPrompt }];
+    setAutoScrollPinned(true);
+    scrollChatToBottom(true);
     await requestAssistantAnswer(userPrompt, historyBeforePrompt, nextThread);
   }
 
   function applyQuickPrompt(prompt: string) {
     setQuestion(prompt);
+  }
+
+  async function askFollowUpFromAnswer(answerText: string, mode: "explain" | "examples" | "shorter", index: number) {
+    if (assistantLoading || !data || !aiContext) return;
+
+    const sourceText = answerText.trim().slice(0, FOLLOW_UP_SOURCE_MAX_CHARS);
+    if (!sourceText) return;
+
+    const followUpPrompt =
+      mode === "explain"
+        ? `Explain this answer in more detail and connect it to my recent trends:\n\n${sourceText}`
+        : mode === "examples"
+          ? `Give 3 concrete examples from my data related to this answer:\n\n${sourceText}`
+          : `Rewrite this answer to be shorter (3 to 5 bullets max):\n\n${sourceText}`;
+
+    const historyBeforePrompt = assistantThread.slice(0, index + 1);
+    const nextThread: AssistantMessage[] = [...historyBeforePrompt, { role: "user", text: followUpPrompt }];
+    setAutoScrollPinned(true);
+    scrollChatToBottom(true);
+    await requestAssistantAnswer(followUpPrompt, historyBeforePrompt, nextThread);
   }
 
   function toggleSpeakReplies() {
@@ -863,24 +1277,31 @@ export default function InsightsPage() {
     });
   }
 
-  async function copyActionPlan(action: SuggestedAction) {
-    if (typeof navigator === "undefined" || !navigator.clipboard) {
-      setAssistantError("Clipboard is not available in this browser.");
+  function updateAssistantTone(nextTone: AssistantTone) {
+    setAssistantTone(nextTone);
+    localStorage.setItem(ASSISTANT_TONE_STORAGE_KEY, nextTone);
+  }
+
+  function updateAssistantOutputMode(nextMode: AssistantOutputMode) {
+    setAssistantOutputMode(nextMode);
+    localStorage.setItem(ASSISTANT_OUTPUT_MODE_STORAGE_KEY, nextMode);
+  }
+
+  function clearAssistantChat() {
+    stopAssistantGeneration();
+    setAutoScrollPinned(true);
+    setAssistantThread([]);
+    setAssistantError(null);
+    setQuestion("");
+    setQuestionInterim("");
+  }
+
+  function toggleVoiceInput() {
+    if (isListening) {
+      stopVoiceInput();
       return;
     }
-
-    const text = [
-      `${action.title}`,
-      ...action.plan.map((line, index) => `${index + 1}. ${line}`),
-    ].join("\n");
-
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedActionId(action.id);
-      setTimeout(() => setCopiedActionId((current) => (current === action.id ? null : current)), 1800);
-    } catch {
-      setAssistantError("Could not copy plan. Please try again.");
-    }
+    startVoiceInput();
   }
 
   function getMetricDrilldownEntries(metric: MetricId): DrilldownEntry[] {
@@ -1054,34 +1475,85 @@ export default function InsightsPage() {
           </div>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-white">Ask + Suggested Actions</h2>
-              <p className="mt-1 text-sm text-zinc-300">Ask about trends and convert detected patterns into a concrete plan.</p>
+              <h2 className="text-lg font-semibold text-white">Ask Trainlytics AI</h2>
+              <p className="mt-1 text-sm text-zinc-300">Ask about trends, and get live streaming answers with data-backed context.</p>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-zinc-900/80 px-3 py-1 text-xs text-zinc-200 shadow-[0_0_0_1px_rgba(251,191,36,0.12)]">
-              <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.9)]" />
-              AI ready with your history
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-zinc-900/80 px-3 py-1 text-xs text-zinc-200 shadow-[0_0_0_1px_rgba(251,191,36,0.12)]">
+                <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.9)]" />
+                AI ready with your history
+              </div>
+              {!assistantLoading ? (
+                <>
+                  <label className="inline-flex items-center gap-2 rounded-full border border-zinc-700/80 bg-zinc-900/70 px-2.5 py-1 text-[11px] text-zinc-200">
+                    <span className="font-semibold text-zinc-400">Tone</span>
+                    <select
+                      value={assistantTone}
+                      onChange={(event) => updateAssistantTone(event.target.value as AssistantTone)}
+                      className="rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold text-zinc-100 outline-none"
+                    >
+                      {ASSISTANT_TONE_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline-flex items-center gap-2 rounded-full border border-zinc-700/80 bg-zinc-900/70 px-2.5 py-1 text-[11px] text-zinc-200">
+                    <span className="font-semibold text-zinc-400">Format</span>
+                    <select
+                      value={assistantOutputMode}
+                      onChange={(event) => updateAssistantOutputMode(event.target.value as AssistantOutputMode)}
+                      className="rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold text-zinc-100 outline-none"
+                    >
+                      {ASSISTANT_OUTPUT_MODE_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-300/35 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold text-amber-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse" />
+                  Generating...
+                </div>
+              )}
             </div>
           </div>
 
           {assistantError && <p className="mt-3 text-xs text-red-300">{assistantError}</p>}
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
-            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] lg:flex lg:h-[30rem] lg:flex-col lg:overflow-hidden">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Ask</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {QUICK_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => applyQuickPrompt(prompt)}
-                    className="rounded-full border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-xs text-zinc-200 transition hover:border-amber-300/60 hover:bg-zinc-800"
-                  >
-                    {prompt}
-                  </button>
-                ))}
+          <div>
+            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] lg:flex lg:h-[38rem] lg:flex-col lg:overflow-hidden">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Ask</p>
+                <button
+                  type="button"
+                  onClick={clearAssistantChat}
+                  disabled={assistantThread.length === 0 && !assistantLoading}
+                  className="rounded-full border border-zinc-600 px-2.5 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  Clear chat
+                </button>
               </div>
+              {!assistantLoading && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {QUICK_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => applyQuickPrompt(prompt)}
+                      className="rounded-full border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-xs text-zinc-200 transition hover:border-amber-300/60 hover:bg-zinc-800"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              <div ref={chatScrollRef} className="mt-4 space-y-3 overflow-y-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-3 lg:min-h-0 lg:flex-1">
+              <div
+                ref={chatScrollRef}
+                style={{ scrollbarGutter: "stable" }}
+                className="mt-4 space-y-4 overflow-y-auto rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-4 lg:min-h-0 lg:flex-1"
+              >
                 {assistantThread.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-zinc-700/70 bg-zinc-900/40 px-3 py-3 text-sm text-zinc-400">
                     Try one of the quick prompts above, or ask anything about intake, burn, net energy, bodyweight, and strength history.
@@ -1092,33 +1564,144 @@ export default function InsightsPage() {
                       key={`${message.role}-${index}`}
                       className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                     >
+                      {(() => {
+                        const showTypingCursor =
+                          assistantLoading &&
+                          message.role === "assistant" &&
+                          index === assistantThread.length - 1;
+                        const deferFormatting =
+                          !assistantLoading &&
+                          deferLastAssistantFormatting &&
+                          message.role === "assistant" &&
+                          index === assistantThread.length - 1;
+
+                        return (
                       <div
-                        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-line ${
+                        className={`rounded-2xl px-3 py-2 text-[15px] whitespace-pre-line ${
                           message.role === "user"
-                            ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
-                            : "border border-zinc-700/70 bg-zinc-900/90 text-zinc-200"
+                            ? "max-w-[82%] bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
+                            : `w-full max-w-[min(92%,44rem)] border border-zinc-700/70 bg-zinc-900/90 text-zinc-200 ${
+                                showTypingCursor ? "min-h-16" : ""
+                              }`
                         }`}
                       >
                         <p className={`text-[10px] uppercase tracking-wide ${message.role === "user" ? "text-black/80" : "text-zinc-400"}`}>
-                          {message.role === "user" ? "You" : "Insights AI"}
+                          {message.role === "user" ? "You" : "Trainlytics AI"}
                         </p>
-                        <p className="mt-1 leading-relaxed">{message.text}</p>
+                        {message.role === "assistant" ? (
+                          <div>
+                          {(() => {
+                            if (showTypingCursor) {
+                              return (
+                                <p className="mt-1 leading-7">
+                                  {message.text}
+                                  <span className="ml-1 inline-block align-middle text-amber-300 motion-safe:animate-pulse">▋</span>
+                                </p>
+                              );
+                            }
+                            if (deferFormatting) {
+                              return (
+                                <p className="mt-1 leading-7">
+                                  {message.text}
+                                  <span className="ml-1 inline-block align-middle text-amber-300/80 motion-safe:animate-pulse">▋</span>
+                                </p>
+                              );
+                            }
+                            const sections = splitAssistantSections(message.text);
+                            if (!sections) {
+                              return (
+                                <>
+                                  <p className="mt-1 leading-7">
+                                    {message.text}
+                                  </p>
+                                </>
+                              );
+                            }
+
+                            return (
+                              <div className="mt-2 space-y-2 transition-opacity duration-200">
+                                {sections.map((section) => (
+                                  <div key={section.title} className="rounded-lg border border-zinc-700/60 bg-zinc-950/60 p-2">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-200/90">{section.title}</p>
+                                    <p className="mt-1 leading-7 whitespace-pre-line">{section.content}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                          </div>
+                        ) : (
+                          <p className="mt-1 leading-7">{message.text}</p>
+                        )}
+                        {message.role === "assistant" && !showTypingCursor && !assistantLoading && (
+                          <div className="mt-2">
+                            <div className="flex flex-wrap gap-1.5">
+                            {index === assistantThread.length - 1 && (
+                              <button
+                                type="button"
+                                onClick={() => void regenerateLastAnswer()}
+                                disabled={!canRegenerate}
+                                className="rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/20 disabled:opacity-50"
+                              >
+                                Regenerate response
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void askFollowUpFromAnswer(message.text, "explain", index)}
+                              disabled={assistantLoading}
+                              className="rounded-full border border-zinc-600 px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+                            >
+                              Explain more
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void askFollowUpFromAnswer(message.text, "examples", index)}
+                              disabled={assistantLoading}
+                              className="rounded-full border border-zinc-600 px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+                            >
+                              Give examples
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void askFollowUpFromAnswer(message.text, "shorter", index)}
+                              disabled={assistantLoading}
+                              className="rounded-full border border-zinc-600 px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+                            >
+                              Make shorter
+                            </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
+                        );
+                      })()}
                     </div>
                   ))
                 )}
-                {assistantLoading && (
-                  <div className="inline-flex items-center gap-2 rounded-xl border border-zinc-700/70 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-300">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-amber-300" />
-                    Insights AI is thinking...
-                  </div>
-                )}
               </div>
+              {!isAutoScrollPinned && assistantLoading && (
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAutoScrollPinned(true);
+                      scrollChatToBottom(true);
+                    }}
+                    className="rounded-full border border-amber-300/40 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/20"
+                  >
+                    Jump to latest
+                  </button>
+                </div>
+              )}
 
-              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto_auto]">
                 <input
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
+                  value={visibleQuestion}
+                  onChange={(event) => {
+                    setQuestion(event.target.value);
+                    setQuestionInterim("");
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !assistantLoading) {
                       event.preventDefault();
@@ -1138,59 +1721,31 @@ export default function InsightsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={startVoiceInput}
-                  disabled={!speechSupported || isListening || assistantLoading}
+                  onClick={stopAssistantGeneration}
+                  disabled={!assistantLoading}
+                  className="rounded-xl border border-red-300/40 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/20 disabled:opacity-50"
+                >
+                  Stop generating
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleVoiceInput}
+                  disabled={!speechSupported || assistantLoading}
                   className="rounded-xl border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
                 >
-                  {isListening ? "Listening..." : "🎙️ Talk"}
+                  {isListening ? "Stop talk" : "🎙️ Talk"}
                 </button>
                 <button
                   type="button"
                   onClick={toggleSpeakReplies}
-                  className="rounded-xl border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+                  disabled={assistantLoading}
+                  className="rounded-xl border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
                 >
                   {speakReplies ? "🔊 On" : "🔈 Off"}
                 </button>
               </div>
-              <div className="mt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => void regenerateLastAnswer()}
-                  disabled={!canRegenerate}
-                  className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  Regenerate answer
-                </button>
-              </div>
             </div>
 
-            <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/55 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] flex h-full flex-col overflow-hidden lg:h-[30rem]">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Suggested Actions</p>
-              <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {suggestedActions.map((action) => (
-                  <div key={action.id} className="rounded-xl border border-zinc-700/70 bg-zinc-900/70 p-3">
-                    <p className="text-sm font-semibold text-zinc-100">{action.title}</p>
-                    <p className="mt-1 text-xs text-zinc-300">{action.reason}</p>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void copyActionPlan(action)}
-                        className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-800"
-                      >
-                        {copiedActionId === action.id ? "Copied" : "Copy to Plan"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setQuestion(`Build a weekly plan for this: ${action.reason}`)}
-                        className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/20"
-                      >
-                        Ask AI
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
 

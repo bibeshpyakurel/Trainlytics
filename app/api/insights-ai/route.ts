@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { jsonError } from "@/lib/apiResponse";
@@ -10,9 +9,21 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
 };
+type AssistantTone = "coach" | "technical" | "plain";
+type AssistantOutputMode = "default" | "fitness_structured";
 
 const MAX_REQUEST_BODY_BYTES = 24 * 1024;
-const PROVIDER_TIMEOUT_MS = 45_000;
+const DEFAULT_PROVIDER_TIMEOUT_MS = 90_000;
+const MIN_PROVIDER_TIMEOUT_MS = 15_000;
+const MAX_PROVIDER_TIMEOUT_MS = 180_000;
+
+function resolveProviderTimeoutMs() {
+  const rawValue = process.env.INSIGHTS_AI_PROVIDER_TIMEOUT_MS;
+  if (!rawValue) return DEFAULT_PROVIDER_TIMEOUT_MS;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) return DEFAULT_PROVIDER_TIMEOUT_MS;
+  return Math.max(MIN_PROVIDER_TIMEOUT_MS, Math.min(MAX_PROVIDER_TIMEOUT_MS, Math.round(parsed)));
+}
 
 function logInsightsRequest(event: string, context: Record<string, unknown>) {
   console.info(
@@ -27,6 +38,7 @@ function logInsightsRequest(event: string, context: Record<string, unknown>) {
 }
 
 export async function POST(request: Request) {
+  const providerTimeoutMs = resolveProviderTimeoutMs();
   const startedAt = Date.now();
   const requestId = crypto.randomUUID();
   const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
@@ -121,11 +133,15 @@ export async function POST(request: Request) {
     let body: {
       question?: string;
       history?: ChatMessage[];
+      tone?: AssistantTone;
+      outputMode?: AssistantOutputMode;
     };
     try {
       body = JSON.parse(rawBody) as {
         question?: string;
         history?: ChatMessage[];
+        tone?: AssistantTone;
+        outputMode?: AssistantOutputMode;
       };
     } catch {
       logInsightsRequest("api.insights_ai.request_denied", {
@@ -153,6 +169,22 @@ export async function POST(request: Request) {
       });
       return jsonError("Question is required.", 400);
     }
+    const tone: AssistantTone =
+      body.tone === "technical" || body.tone === "plain" || body.tone === "coach"
+        ? body.tone
+        : "coach";
+    const toneInstruction =
+      tone === "technical"
+        ? "Tone mode: Technical. Use precise terminology, concise reasoning, and explicit assumptions."
+        : tone === "plain"
+          ? "Tone mode: Plain English. Use simple language, short sentences, and avoid jargon."
+          : "Tone mode: Coach. Be motivational but practical, with clear next steps.";
+    const outputMode: AssistantOutputMode =
+      body.outputMode === "fitness_structured" ? "fitness_structured" : "default";
+    const outputModeInstruction =
+      outputMode === "fitness_structured"
+        ? "Output mode: Fitness structured. Format every answer with exactly three labeled sections: Key insight, Risk, Next workout action."
+        : "For longer responses, format with exactly three labeled sections: Summary, Details, Action Plan.";
 
     const userContext = await loadInsightsAiContextForUser(supabase, user.id);
     const history = (body.history ?? [])
@@ -172,7 +204,10 @@ export async function POST(request: Request) {
       "Whenever answering about bodyweight, include BOTH kg and lb values when data exists.",
       "If data is missing or insufficient, say so clearly.",
       "Be concise, practical, and action-oriented.",
-      "When useful, provide 3-5 bullets.",
+      toneInstruction,
+      outputModeInstruction,
+      "Default to short answers. Do not include every possible detail unless the user asks for deep detail.",
+      "When useful, provide up to 3 bullets.",
       "Do not fabricate metrics or dates.",
     ].join(" ");
 
@@ -192,7 +227,7 @@ export async function POST(request: Request) {
     ];
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), providerTimeoutMs);
     let response: Response;
     try {
       response = await fetch(`${env.baseUrl}/chat/completions`, {
@@ -203,6 +238,7 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model: env.model,
+          stream: true,
           messages,
         }),
         signal: controller.signal,
@@ -215,7 +251,7 @@ export async function POST(request: Request) {
           clientIp,
           status: 504,
           reason: "provider_timeout",
-          timeoutMs: PROVIDER_TIMEOUT_MS,
+          timeoutMs: providerTimeoutMs,
           durationMs: Date.now() - startedAt,
         });
         return jsonError("AI provider request timed out.", 504);
@@ -249,21 +285,16 @@ export async function POST(request: Request) {
       return jsonError(`AI provider error: ${response.status}. ${providerMessage}`, 502);
     }
 
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-
-    const answer = data.choices?.[0]?.message?.content?.trim();
-    if (!answer) {
+    if (!response.body) {
       logInsightsRequest("api.insights_ai.request_failed", {
         requestId,
         userId: user.id,
         clientIp,
         status: 502,
-        reason: "provider_empty_answer",
+        reason: "provider_empty_stream",
         durationMs: Date.now() - startedAt,
       });
-      return jsonError("AI returned an empty response.", 502);
+      return jsonError("AI provider returned an empty stream.", 502);
     }
 
     logInsightsRequest("api.insights_ai.request_ok", {
@@ -276,7 +307,14 @@ export async function POST(request: Request) {
       historyMessages: history.length,
       durationMs: Date.now() - startedAt,
     });
-    return NextResponse.json({ answer });
+    return new Response(response.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
   } catch (error) {
     logServerError("api.insights_ai.unhandled", error);
     logInsightsRequest("api.insights_ai.request_failed", {
