@@ -105,10 +105,7 @@ flowchart LR
   SC --> SD[(Supabase Postgres + RLS)]
   SC --> SS[(Supabase Storage)]
 
-  F --> API1["/api/auth/account-status"]
   F --> API2["/api/insights-ai"]
-  A --> API1
-  API1 --> SA
   API2 --> OAI[(OpenAI API)]
 
   N --> MON["/api/monitoring/error"]
@@ -121,7 +118,7 @@ flowchart LR
 1. Requests hit `proxy.ts`, enforcing public/protected route access.
 2. Client pages use `lib/supabaseClient` for auth/session and scoped data.
 3. Supabase RLS policies enforce per-user table isolation.
-4. Server routes handle privileged checks and optional AI insights.
+4. Server routes handle optional AI insights and operational monitoring.
 5. Client/server runtime errors are reported via `/api/monitoring/error`.
 
 ## Route Contract

@@ -263,7 +263,7 @@ export async function POST(request: Request) {
         providerMessage,
         durationMs: Date.now() - startedAt,
       });
-      return jsonError(`AI provider error: ${response.status}. ${providerMessage}`, 502);
+      return jsonError("AI provider request failed. Please try again.", 502);
     }
 
     if (!response.body) {
