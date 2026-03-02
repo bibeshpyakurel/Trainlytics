@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DashboardData } from "@/lib/dashboardTypes";
 import { loadDashboardData, type DashboardChartWindow } from "@/lib/dashboardService";
-import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { ROUTES, buildSessionExpiredPath } from "@/lib/routes";
 import { getDashboardViewModel } from "@/features/dashboard/view";
 import type {
   StrengthTimeSeriesPoint,
@@ -181,7 +181,7 @@ export default function DashboardPage() {
       if (result.status === "unauthenticated") {
         setMsg("You are not logged in.");
         setLoading(false);
-        router.replace(buildLoginRedirectPath(ROUTES.dashboard, "session_expired"));
+        router.replace(buildSessionExpiredPath(ROUTES.dashboard));
         return;
       }
 

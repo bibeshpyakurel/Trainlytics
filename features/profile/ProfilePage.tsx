@@ -12,7 +12,7 @@ import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
 import TogglePill from "@/shared/ui/TogglePill";
 import { STORAGE_BUCKETS, STORAGE_PUBLIC_PATH_MARKERS, TABLES } from "@/lib/dbNames";
 import { APP_COPY } from "@/lib/appCopy";
-import { ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { ROUTES, buildSessionExpiredPath } from "@/lib/routes";
 import { refreshEnergyMetricsAfterWrite, recomputeMaintenanceKcalCurrentForUser } from "@/lib/dailyEnergyMetrics";
 import { MAINTENANCE_FORMULA_DEFINITION, MAINTENANCE_METHODS } from "@/lib/energyMetrics";
 import type { ActivityLevel } from "@/lib/energyCalculations";
@@ -175,7 +175,7 @@ export default function ProfilePage() {
       if (!isMounted) return;
 
       if (error || !data.session) {
-        router.replace(buildLoginRedirectPath(ROUTES.profile, "session_expired"));
+        router.replace(buildSessionExpiredPath(ROUTES.profile));
         return;
       }
 

@@ -1,6 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { ROUTES, isProtectedRoute, isPublicRoute } from "@/lib/routes";
+import { ROUTES, getSafeProtectedNextRoute, isProtectedRoute, isPublicRoute } from "@/lib/routes";
 import {
   SESSION_STARTED_AT_COOKIE,
   isSessionExpiredFromStart,
@@ -17,8 +17,10 @@ function buildNextFromRequest(request: NextRequest) {
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const isProtectedPath = isProtectedRoute(pathname);
+  const shouldRouteThroughLaunch = pathname === "/";
 
-  if (pathname !== ROUTES.launch && pathname !== ROUTES.sessionExpired && isEntryDocumentRequest(request)) {
+  if (pathname !== ROUTES.launch && pathname !== ROUTES.sessionExpired && shouldRouteThroughLaunch && isEntryDocumentRequest(request)) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = ROUTES.launch;
     redirectUrl.search = "";
@@ -26,7 +28,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const routeNeedsAuthCheck = isProtectedRoute(pathname) || isPublicRoute(pathname);
+  const routeNeedsAuthCheck = isProtectedPath || isPublicRoute(pathname);
 
   if (!routeNeedsAuthCheck) {
     return NextResponse.next();
@@ -67,9 +69,12 @@ export async function proxy(request: NextRequest) {
 
     if (startedAt && isSessionExpiredFromStart(startedAt, now)) {
       const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = ROUTES.login;
+      redirectUrl.pathname = ROUTES.sessionExpired;
       redirectUrl.search = "";
-      redirectUrl.searchParams.set("reason", "session_expired");
+      const safeNext = getSafeProtectedNextRoute(buildNextFromRequest(request));
+      if (safeNext) {
+        redirectUrl.searchParams.set("next", safeNext);
+      }
 
       const expiredResponse = NextResponse.redirect(redirectUrl);
       request.cookies.getAll().forEach((cookie) => {
@@ -91,15 +96,23 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  if (!user && isProtectedRoute(pathname)) {
+  if (!user && isProtectedPath) {
     const hasSupabaseCookie = request.cookies
       .getAll()
       .some((cookie) => cookie.name.startsWith("sb-"));
 
+    if (hasSupabaseCookie) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = ROUTES.sessionExpired;
+      redirectUrl.search = "";
+      redirectUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
+      return NextResponse.redirect(redirectUrl);
+    }
+
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = ROUTES.login;
     redirectUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
-    redirectUrl.searchParams.set("reason", hasSupabaseCookie ? "session_expired" : "auth_required");
+    redirectUrl.searchParams.set("reason", "auth_required");
     return NextResponse.redirect(redirectUrl);
   }
 

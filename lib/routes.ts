@@ -59,6 +59,17 @@ export function buildLoginRedirectPath(
   return `${ROUTES.login}?${params.toString()}`;
 }
 
+export function buildSessionExpiredPath(nextPath: string) {
+  const safeNext = getSafeProtectedNextRoute(nextPath);
+  if (!safeNext) {
+    return ROUTES.sessionExpired;
+  }
+
+  const params = new URLSearchParams();
+  params.set("next", safeNext);
+  return `${ROUTES.sessionExpired}?${params.toString()}`;
+}
+
 export const API_ROUTES = {
   insightsAi: "/api/insights-ai",
 } as const;
