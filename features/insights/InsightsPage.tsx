@@ -22,7 +22,7 @@ import { buildInsightsView } from "@/lib/insightsView";
 import type { InsightMetricPoint, InsightsData } from "@/lib/insightsTypes";
 import { calculateBmi } from "@/lib/energyCalculations";
 import { STORAGE_KEYS } from "@/lib/preferences";
-import { API_ROUTES, ROUTES, buildLoginRedirectPath } from "@/lib/routes";
+import { API_ROUTES, ROUTES, buildSessionExpiredPath } from "@/lib/routes";
 
 type AssistantMessage = { role: "user" | "assistant"; text: string };
 type AssistantSection = { title: string; content: string };
@@ -373,7 +373,7 @@ export default function InsightsPage() {
       if (result.status === "unauthenticated") {
         setMsg("You are not logged in.");
         setLoading(false);
-        router.replace(buildLoginRedirectPath(ROUTES.insights, "session_expired"));
+        router.replace(buildSessionExpiredPath(ROUTES.insights));
         return;
       }
 

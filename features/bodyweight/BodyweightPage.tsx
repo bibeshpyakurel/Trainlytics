@@ -29,7 +29,6 @@ import {
 import { calculateBmi, getBmiCategory } from "@/lib/energyCalculations";
 import { loadProfileEnergySettingsForCurrentUser } from "@/lib/dailyEnergyMetrics";
 import {
-  getBmiChartView,
   getBodyweightChartView,
   getBodyweightHistoryView,
   getBodyweightSummary,
@@ -56,7 +55,6 @@ export default function BodyweightPage() {
   const [unit, setUnit] = useState<Unit>("lb");
   const [displayUnit, setDisplayUnit] = useState<Unit>("lb");
   const [chartRange, setChartRange] = useState<ChartRange>("biweekly");
-  const [chartMetric, setChartMetric] = useState<"weight" | "bmi">("weight");
 
   const [logs, setLogs] = useState<BodyweightLog[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -112,8 +110,7 @@ export default function BodyweightPage() {
     displayUnit,
     chartRange
   );
-  const bmiChartView = getBmiChartView(logs, chartRange, profileHeightCm);
-  const activeChartView = chartMetric === "weight" ? weightChartView : bmiChartView;
+  const activeChartView = weightChartView;
   const { chartData, yMin, yMax, yTicks, rangeStartIso } = activeChartView;
   const { latestLog } = getBodyweightSummary(logs, displayUnit);
   const latestBmi = latestLog
@@ -348,73 +345,31 @@ export default function BodyweightPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">Bodyweight Trend</h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                {chartMetric === "weight" ? "Date vs Weight" : "Date vs BMI Index"}
-              </p>
-              <div className="mt-3 inline-flex rounded-lg border border-zinc-700 bg-zinc-950/70 p-1">
-                <button
-                  onClick={() => setChartMetric("weight")}
-                  className={`rounded-md px-3 py-1 text-sm transition ${
-                    chartMetric === "weight"
-                      ? "bg-amber-300 text-zinc-900"
-                      : "text-zinc-300 hover:bg-zinc-800"
-                  }`}
-                >
-                  Bodyweight Trend
-                </button>
-                <button
-                  onClick={() => setChartMetric("bmi")}
-                  className={`rounded-md px-3 py-1 text-sm transition ${
-                    chartMetric === "bmi"
-                      ? "bg-amber-300 text-zinc-900"
-                      : "text-zinc-300 hover:bg-zinc-800"
-                  }`}
-                >
-                  BMI Index
-                </button>
-              </div>
+              <p className="mt-1 text-sm text-zinc-400">Date vs Weight</p>
             </div>
 
-            {chartMetric === "weight" ? (
-              <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-950/70 p-1">
-                <button
-                  onClick={() => setDisplayUnit("kg")}
-                  className={`rounded-md px-3 py-1 text-sm transition ${
-                    displayUnit === "kg"
-                      ? "bg-amber-300 text-zinc-900"
-                      : "text-zinc-300 hover:bg-zinc-800"
-                  }`}
-                >
-                  kg
-                </button>
-                <button
-                  onClick={() => setDisplayUnit("lb")}
-                  className={`rounded-md px-3 py-1 text-sm transition ${
-                    displayUnit === "lb"
-                      ? "bg-amber-300 text-zinc-900"
-                      : "text-zinc-300 hover:bg-zinc-800"
-                  }`}
-                >
-                  lb
-                </button>
-              </div>
-            ) : chartMetric === "bmi" ? (
-              <div className="w-full rounded-xl border border-zinc-700 bg-zinc-950/70 p-3 sm:w-[300px]">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                  BMI Categories
-                </p>
-                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-zinc-300">
-                  <span>Underweight</span>
-                  <span>&lt; 18.5</span>
-                  <span>Normal</span>
-                  <span>18.5 - 24.9</span>
-                  <span>Overweight</span>
-                  <span>25.0 - 29.9</span>
-                  <span>Obese</span>
-                  <span>&gt;= 30.0</span>
-                </div>
-              </div>
-            ) : null}
+            <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-950/70 p-1">
+              <button
+                onClick={() => setDisplayUnit("kg")}
+                className={`rounded-md px-3 py-1 text-sm transition ${
+                  displayUnit === "kg"
+                    ? "bg-amber-300 text-zinc-900"
+                    : "text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                kg
+              </button>
+              <button
+                onClick={() => setDisplayUnit("lb")}
+                className={`rounded-md px-3 py-1 text-sm transition ${
+                  displayUnit === "lb"
+                    ? "bg-amber-300 text-zinc-900"
+                    : "text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                lb
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 flex flex-wrap gap-2">
@@ -473,9 +428,7 @@ export default function BodyweightPage() {
           <div className="mt-4 h-72 w-full">
             {chartData.length === 0 ? (
               <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-400">
-                {chartMetric === "bmi" && !(profileHeightCm && profileHeightCm > 0)
-                  ? "Add height in Profile to enable BMI chart."
-                  : "No entries in this selected range."}
+                No entries in this selected range.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -522,9 +475,7 @@ export default function BodyweightPage() {
                           ? value
                           : Number(value ?? 0);
 
-                      return chartMetric === "weight"
-                        ? ([`${numericValue.toFixed(1)} ${displayUnit}`, "Bodyweight"] as const)
-                        : ([numericValue.toFixed(1), "BMI Index"] as const);
+                      return [`${numericValue.toFixed(1)} ${displayUnit}`, "Bodyweight"] as const;
                     }}
                     labelFormatter={(label, payload) => {
                       const logDate = payload?.[0]?.payload?.logDate;
@@ -533,13 +484,13 @@ export default function BodyweightPage() {
                   />
                   <Area
                     type="monotone"
-                    dataKey={chartMetric === "weight" ? "weight" : "bmi"}
+                    dataKey="weight"
                     fill="url(#bodyweightAreaFill)"
                     stroke="none"
                   />
                   <Line
                     type="monotone"
-                    dataKey={chartMetric === "weight" ? "weight" : "bmi"}
+                    dataKey="weight"
                     stroke="url(#bodyweightLineStroke)"
                     strokeWidth={3}
                     dot={{ r: 3, fill: "#22d3ee", stroke: "#0f172a", strokeWidth: 1 }}

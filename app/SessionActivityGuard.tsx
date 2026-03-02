@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { clearAccountScopedClientState } from "@/lib/accountScopedClientState";
-import { ROUTES, isProtectedRoute } from "@/lib/routes";
+import { buildSessionExpiredPath, isProtectedRoute } from "@/lib/routes";
 import {
   SESSION_LAST_ACTIVITY_STORAGE_KEY,
   SESSION_MAX_AGE_MS,
@@ -80,9 +80,7 @@ export default function SessionActivityGuard() {
       await supabase.auth.signOut();
       clearAccountScopedClientState();
 
-      const params = new URLSearchParams();
-      params.set("next", nextPath);
-      router.replace(`${ROUTES.sessionExpired}?${params.toString()}`);
+      router.replace(buildSessionExpiredPath(nextPath));
     };
 
     const initialLastActivityMs = resolveLastActivityMs();
