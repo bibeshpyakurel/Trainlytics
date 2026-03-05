@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { APP_COPY } from "@/lib/appCopy";
 import { TABLES } from "@/lib/dbNames";
 import { ROUTES, buildLoginRedirectPath, getSafeProtectedNextRoute } from "@/lib/routes";
+import { markSessionActivity } from "@/lib/sessionTimeout";
 
 export default function LaunchPage() {
   const router = useRouter();
@@ -47,6 +48,7 @@ export default function LaunchPage() {
       const resolvedFirstName = (profileData?.first_name as string | null | undefined) ?? null;
       setWelcomeLabel(resolvedFirstName?.trim() ? `Welcome Back, ${resolvedFirstName.trim()}` : "Welcome Back");
       setSubtitle(APP_COPY.launchSignedInText);
+      markSessionActivity();
 
       setVisible(true);
       exitTimer = window.setTimeout(() => setExiting(true), 1300);

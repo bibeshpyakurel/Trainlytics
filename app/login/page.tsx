@@ -17,6 +17,7 @@ import {
 import { toFriendlyLoginReason, toFriendlySignInErrorMessage } from "@/lib/authErrors";
 import { reportClientError } from "@/lib/monitoringClient";
 import { runAuthSessionPreflight } from "@/lib/authPreflight";
+import { markSessionActivity } from "@/lib/sessionTimeout";
 
 function isInvalidCredentialsError(message: string) {
   const text = message.toLowerCase();
@@ -74,6 +75,7 @@ export default function LoginPage() {
         setMsg("Session expired. Please sign in again.");
       },
       onAuthenticated: () => {
+        markSessionActivity();
         const launchAnimationEnabled =
           localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
         const nextParam = readSearchParam("next");
@@ -118,6 +120,7 @@ export default function LoginPage() {
     rememberRecentLoginEmail(normalizedEmail);
     setRecentEmails(getRecentLoginEmails());
 
+    markSessionActivity();
     const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
     const nextParam = readSearchParam("next");
     const nextRoute = getSafeProtectedNextRoute(nextParam);

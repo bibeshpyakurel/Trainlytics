@@ -15,10 +15,59 @@ type ChatMessage = {
   text: string;
 };
 
+type InsightsAiRequestBody = {
+  question?: string;
+  history?: ChatMessage[];
+  tone?: AssistantTone;
+  outputMode?: AssistantOutputMode;
+  warmup?: boolean;
+};
+
+type InsightsAiContextData = Awaited<ReturnType<typeof loadInsightsAiContextForUser>>;
+type CachedAiContext = {
+  context: InsightsAiContextData;
+  contextPrompt: string;
+  expiresAtMs: number;
+};
+
 const MAX_REQUEST_BODY_BYTES = 24 * 1024;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 90_000;
 const MIN_PROVIDER_TIMEOUT_MS = 15_000;
 const MAX_PROVIDER_TIMEOUT_MS = 180_000;
+const CONTEXT_CACHE_TTL_MS = 60_000;
+const CONTEXT_CACHE_MAX_USERS = 200;
+const MAX_HISTORY_MESSAGES = 6;
+const CONTEXT_CACHE = new Map<string, CachedAiContext>();
+
+function buildFullContext(context: InsightsAiContextData) {
+  return {
+    ...context,
+    contextMode: "full",
+  };
+}
+
+function compactContextCache() {
+  if (CONTEXT_CACHE.size <= CONTEXT_CACHE_MAX_USERS) return;
+  const oldestKey = CONTEXT_CACHE.keys().next().value as string | undefined;
+  if (oldestKey) CONTEXT_CACHE.delete(oldestKey);
+}
+
+async function getCachedInsightsContext(
+  supabase: ReturnType<typeof createServerClient>,
+  userId: string
+): Promise<{ context: InsightsAiContextData; contextPrompt: string; cacheHit: boolean }> {
+  const now = Date.now();
+  const cached = CONTEXT_CACHE.get(userId);
+  if (cached && cached.expiresAtMs > now) {
+    return { context: cached.context, contextPrompt: cached.contextPrompt, cacheHit: true };
+  }
+
+  const context = await loadInsightsAiContextForUser(supabase, userId);
+  const contextPrompt = ["User context data:", JSON.stringify(buildFullContext(context))].join("\n");
+  CONTEXT_CACHE.set(userId, { context, contextPrompt, expiresAtMs: now + CONTEXT_CACHE_TTL_MS });
+  compactContextCache();
+  return { context, contextPrompt, cacheHit: false };
+}
 
 function resolveProviderTimeoutMs() {
   const rawValue = process.env.INSIGHTS_AI_PROVIDER_TIMEOUT_MS;
@@ -43,6 +92,7 @@ function logInsightsRequest(event: string, context: Record<string, unknown>) {
 export async function POST(request: Request) {
   const providerTimeoutMs = resolveProviderTimeoutMs();
   const startedAt = Date.now();
+  const authStartedAt = Date.now();
   const requestId = crypto.randomUUID();
   const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
@@ -100,21 +150,7 @@ export async function POST(request: Request) {
     return jsonError("Authentication required.", 401);
   }
 
-  let env: ReturnType<typeof getInsightsAiEnv>;
-  try {
-    env = getInsightsAiEnv();
-  } catch (error) {
-    logServerError("api.insights_ai.env_missing", error);
-    logInsightsRequest("api.insights_ai.request_failed", {
-      requestId,
-      userId: user.id,
-      clientIp,
-      status: 500,
-      reason: "openai_env_missing",
-      durationMs: Date.now() - startedAt,
-    });
-    return jsonError("Missing OPENAI_API_KEY. Add it to your environment to enable AI chat.", 500);
-  }
+  const authDurationMs = Date.now() - authStartedAt;
 
   try {
     const rawBody = await request.text();
@@ -133,19 +169,9 @@ export async function POST(request: Request) {
       return jsonError("Request body is too large.", 413);
     }
 
-    let body: {
-      question?: string;
-      history?: ChatMessage[];
-      tone?: AssistantTone;
-      outputMode?: AssistantOutputMode;
-    };
+    let body: InsightsAiRequestBody;
     try {
-      body = JSON.parse(rawBody) as {
-        question?: string;
-        history?: ChatMessage[];
-        tone?: AssistantTone;
-        outputMode?: AssistantOutputMode;
-      };
+      body = JSON.parse(rawBody) as InsightsAiRequestBody;
     } catch {
       logInsightsRequest("api.insights_ai.request_denied", {
         requestId,
@@ -157,6 +183,33 @@ export async function POST(request: Request) {
         durationMs: Date.now() - startedAt,
       });
       return jsonError("Invalid JSON payload.", 400);
+    }
+
+    const warmupOnly = body.warmup === true;
+    const contextStartedAt = Date.now();
+    const { context: userContext, contextPrompt, cacheHit } = await getCachedInsightsContext(supabase, user.id);
+    const contextLoadDurationMs = Date.now() - contextStartedAt;
+
+    if (warmupOnly) {
+      logInsightsRequest("api.insights_ai.warmup_ok", {
+        requestId,
+        userId: user.id,
+        clientIp,
+        status: 200,
+        contextChars: contextPrompt.length,
+        contextCacheHit: cacheHit,
+        authDurationMs,
+        contextLoadDurationMs,
+        durationMs: Date.now() - startedAt,
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Server-Timing": `auth;dur=${authDurationMs},context;dur=${contextLoadDurationMs}`,
+        },
+      });
     }
 
     const question = body.question?.trim();
@@ -172,6 +225,23 @@ export async function POST(request: Request) {
       });
       return jsonError("Question is required.", 400);
     }
+
+    let env: ReturnType<typeof getInsightsAiEnv>;
+    try {
+      env = getInsightsAiEnv();
+    } catch (error) {
+      logServerError("api.insights_ai.env_missing", error);
+      logInsightsRequest("api.insights_ai.request_failed", {
+        requestId,
+        userId: user.id,
+        clientIp,
+        status: 500,
+        reason: "openai_env_missing",
+        durationMs: Date.now() - startedAt,
+      });
+      return jsonError("Missing OPENAI_API_KEY. Add it to your environment to enable AI chat.", 500);
+    }
+
     const tone: AssistantTone =
       body.tone === "technical" || body.tone === "plain" || body.tone === "coach"
         ? body.tone
@@ -179,23 +249,17 @@ export async function POST(request: Request) {
     const outputMode: AssistantOutputMode =
       body.outputMode === "fitness_structured" ? "fitness_structured" : "default";
 
-    const userContext = await loadInsightsAiContextForUser(supabase, user.id);
     const history = (body.history ?? [])
       .filter((item) => (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
       .map((item) => ({ role: item.role, text: item.text.trim() }))
       .filter((item) => item.text.length > 0)
-      .slice(-8);
+      .slice(-MAX_HISTORY_MESSAGES);
 
     const systemPrompt = buildInsightsSystemPrompt({
       firstName: userContext.firstName,
       tone,
       outputMode,
     });
-
-    const contextPrompt = [
-      "User context data:",
-      JSON.stringify(userContext),
-    ].join("\n");
 
     const messages = [
       { role: "system", content: systemPrompt },
@@ -209,6 +273,7 @@ export async function POST(request: Request) {
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), providerTimeoutMs);
+    const providerStartedAt = Date.now();
     let response: Response;
     try {
       response = await fetch(`${env.baseUrl}/chat/completions`, {
@@ -241,6 +306,7 @@ export async function POST(request: Request) {
     } finally {
       clearTimeout(timeoutId);
     }
+    const providerConnectDurationMs = Date.now() - providerStartedAt;
 
     if (!response.ok) {
       let providerMessage = `status_${response.status}`;
@@ -278,6 +344,40 @@ export async function POST(request: Request) {
       return jsonError("AI provider returned an empty stream.", 502);
     }
 
+    let firstTokenDurationMs: number | null = null;
+    const passthroughStream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const reader = response.body?.getReader();
+        if (!reader) {
+          controller.close();
+          return;
+        }
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              if (firstTokenDurationMs == null) {
+                firstTokenDurationMs = Date.now() - providerStartedAt;
+                logInsightsRequest("api.insights_ai.first_token", {
+                  requestId,
+                  userId: user.id,
+                  clientIp,
+                  firstTokenDurationMs,
+                });
+              }
+              controller.enqueue(value);
+            }
+          }
+          controller.close();
+        } catch (streamError) {
+          controller.error(streamError);
+        } finally {
+          reader.releaseLock();
+        }
+      },
+    });
+
     logInsightsRequest("api.insights_ai.request_ok", {
       requestId,
       userId: user.id,
@@ -286,14 +386,22 @@ export async function POST(request: Request) {
       questionChars: question.length,
       bodyBytes,
       historyMessages: history.length,
+      contextMode: "full",
+      contextChars: contextPrompt.length,
+      contextCacheHit: cacheHit,
+      authDurationMs,
+      contextLoadDurationMs,
+      providerConnectDurationMs,
       durationMs: Date.now() - startedAt,
     });
-    return new Response(response.body, {
+    return new Response(passthroughStream, {
       status: 200,
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
+        "Server-Timing": `auth;dur=${authDurationMs},context;dur=${contextLoadDurationMs},provider_connect;dur=${providerConnectDurationMs}`,
+        "X-Insights-Context-Cache": cacheHit ? "hit" : "miss",
       },
     });
   } catch (error) {

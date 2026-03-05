@@ -63,14 +63,7 @@ type PersistedThread = { messages: AssistantMessage[] };
 
 const VOICE_RESTART_DELAY_MS = 180;
 const FOLLOW_UP_SOURCE_MAX_CHARS = 1_200;
-const STREAM_REVEAL_TICK_MIN_MS = 18;
-const STREAM_REVEAL_TICK_MAX_MS = 28;
-const STREAM_REVEAL_BASE_CHARS_PER_TICK = 1;
-const STREAM_REVEAL_MAX_CHARS_PER_TICK = 4;
-const STREAM_REVEAL_BOOST_MAX_CHARS_PER_TICK = 7;
-const STREAM_REVEAL_BOOST_QUEUE_THRESHOLD = 200;
 const STREAM_COMPLETION_FORMAT_DELAY_MS = 180;
-const AUTO_SCROLL_PAUSE_THRESHOLD_PX = 80;
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 24;
 const ASSISTANT_TONE_STORAGE_KEY = "insights_assistant_tone";
 const ASSISTANT_TONE_OPTIONS: Array<{ id: AssistantTone; label: string }> = [
@@ -80,7 +73,7 @@ const ASSISTANT_TONE_OPTIONS: Array<{ id: AssistantTone; label: string }> = [
 ];
 const ASSISTANT_OUTPUT_MODE_STORAGE_KEY = "insights_assistant_output_mode";
 const ASSISTANT_OUTPUT_MODE_OPTIONS: Array<{ id: AssistantOutputMode; label: string }> = [
-  { id: "default", label: "Default" },
+  { id: "default", label: "Conversational" },
   { id: "fitness_structured", label: "Fitness Structured" },
 ];
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -210,27 +203,6 @@ function splitAssistantSections(text: string): AssistantSection[] | null {
     return resolved.filter((section) => section.content.length > 0);
   }
 
-  const paragraphs = normalized.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean);
-  if (paragraphs.length >= 3) {
-    return [
-      { title: "Summary", content: paragraphs[0] },
-      { title: "Details", content: paragraphs.slice(1, -1).join("\n\n") },
-      { title: "Action Plan", content: paragraphs[paragraphs.length - 1] },
-    ].filter((section) => section.content.length > 0);
-  }
-
-  const sentences = normalized.match(/[^.!?]+[.!?]*/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
-  if (sentences.length >= 6) {
-    const summary = sentences.slice(0, 2).join(" ");
-    const details = sentences.slice(2, -2).join(" ");
-    const actionPlan = sentences.slice(-2).join(" ");
-    return [
-      { title: "Summary", content: summary },
-      { title: "Details", content: details },
-      { title: "Action Plan", content: actionPlan },
-    ].filter((section) => section.content.length > 0);
-  }
-
   return null;
 }
 
@@ -263,10 +235,13 @@ export default function InsightsPage() {
   const voiceStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
+  const warmupStartedRef = useRef(false);
   const stopGenerationRequestedRef = useRef(false);
   const formatSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoScrollPinnedRef = useRef(true);
+  const assistantLoadingRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
+  const lastKnownScrollTopRef = useRef(0);
   const [deferLastAssistantFormatting, setDeferLastAssistantFormatting] = useState(false);
 
   function setAutoScrollPinned(nextValue: boolean) {
@@ -282,12 +257,17 @@ export default function InsightsPage() {
     if (!smooth && distanceFromBottom <= 1) return;
     isProgrammaticScrollRef.current = true;
     container.scrollTo({ top: scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    const syncLastKnownScrollTop = () => {
+      lastKnownScrollTopRef.current = container.scrollTop;
+    };
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(syncLastKnownScrollTop);
       window.requestAnimationFrame(() => {
         isProgrammaticScrollRef.current = false;
       });
       return;
     }
+    setTimeout(syncLastKnownScrollTop, 0);
     setTimeout(() => {
       isProgrammaticScrollRef.current = false;
     }, 0);
@@ -391,6 +371,18 @@ export default function InsightsPage() {
       isMounted = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    if (!data || warmupStartedRef.current) return;
+    warmupStartedRef.current = true;
+    void fetch(API_ROUTES.insightsAi, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ warmup: true }),
+    }).catch(() => {
+      // Best-effort warmup only.
+    });
+  }, [data]);
 
   const selectedRangeConfig = useMemo(
     () => RANGE_OPTIONS.find((item) => item.id === selectedRange) ?? RANGE_OPTIONS[1],
@@ -857,17 +849,6 @@ export default function InsightsPage() {
     return [...history, ...forecast];
   }, [mergedTrendData]);
 
-  const aiContext = useMemo(() => {
-    if (!data) return null;
-    return {
-      facts: rangeInsights.facts,
-      correlations: rangeInsights.correlations,
-      improvements: rangeInsights.improvements,
-      achievements: rangeInsights.achievements,
-      suggestions: rangeInsights.suggestions,
-    };
-  }, [data, rangeInsights]);
-
   const threadStorageKey = useMemo(() => {
     if (!data?.email) return null;
     return `insights_thread_session_${data.email.trim().toLowerCase()}`;
@@ -1103,17 +1084,32 @@ export default function InsightsPage() {
   }, [assistantThread, threadStorageKey, threadHydrated]);
 
   useEffect(() => {
+    assistantLoadingRef.current = assistantLoading;
+  }, [assistantLoading]);
+
+  useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
+    lastKnownScrollTopRef.current = container.scrollTop;
 
     const onScroll = () => {
       if (isProgrammaticScrollRef.current) return;
+      const previousScrollTop = lastKnownScrollTopRef.current;
       const { scrollTop, scrollHeight, clientHeight } = container;
+      lastKnownScrollTopRef.current = scrollTop;
       const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+      const userScrolledUp = scrollTop < previousScrollTop - 1;
+      const nearBottom = distanceFromBottom <= AUTO_SCROLL_RESUME_THRESHOLD_PX;
 
-      if (distanceFromBottom > AUTO_SCROLL_PAUSE_THRESHOLD_PX && autoScrollPinnedRef.current) {
+      // User scroll intent always wins while streaming.
+      if (assistantLoadingRef.current && autoScrollPinnedRef.current && userScrolledUp) {
         setAutoScrollPinned(false);
-      } else if (distanceFromBottom <= AUTO_SCROLL_RESUME_THRESHOLD_PX && !autoScrollPinnedRef.current) {
+        return;
+      }
+
+      // During streaming, keep user override sticky to avoid tug-of-war jitter.
+      // Re-pin only after streaming ends (or via explicit "Jump to latest").
+      if (!assistantLoadingRef.current && nearBottom && !autoScrollPinnedRef.current) {
         setAutoScrollPinned(true);
       }
     };
@@ -1258,7 +1254,6 @@ export default function InsightsPage() {
     setAssistantError(null);
     setAssistantLoading(true);
     setAssistantThread([...nextThread, { role: "assistant", text: "" }]);
-    let isStreaming = true;
     stopGenerationRequestedRef.current = false;
 
     try {
@@ -1270,7 +1265,6 @@ export default function InsightsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: prompt,
-          context: aiContext,
           history: historyBeforePrompt,
           tone: assistantTone,
           outputMode: assistantOutputMode,
@@ -1299,55 +1293,6 @@ export default function InsightsPage() {
       const decoder = new TextDecoder();
       let visibleText = "";
       let sseBuffer = "";
-      let rawQueue = "";
-      isStreaming = true;
-
-      const getRevealTickMs = (queueLength: number) => {
-        if (queueLength >= 420) return STREAM_REVEAL_TICK_MIN_MS;
-        if (queueLength >= 240) return 20;
-        if (queueLength >= 100) return 22;
-        return STREAM_REVEAL_TICK_MAX_MS;
-      };
-
-      const nextFrame = () => new Promise<number>((resolve) => {
-        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-          window.requestAnimationFrame((timestamp) => resolve(timestamp));
-          return;
-        }
-        setTimeout(() => resolve(Date.now()), STREAM_REVEAL_TICK_MIN_MS);
-      });
-
-      const revealLoop = (async () => {
-        let lastRevealAt = 0;
-        while (isStreaming || rawQueue.length > 0) {
-          const frameAt = await nextFrame();
-          if (stopGenerationRequestedRef.current) {
-            rawQueue = "";
-            isStreaming = false;
-          }
-          if (rawQueue.length > 0) {
-            const tickMs = getRevealTickMs(rawQueue.length);
-            if (lastRevealAt !== 0 && frameAt - lastRevealAt < tickMs) {
-              continue;
-            }
-            lastRevealAt = frameAt;
-            const queueBoost = rawQueue.length > STREAM_REVEAL_BOOST_QUEUE_THRESHOLD
-              ? Math.ceil((rawQueue.length - STREAM_REVEAL_BOOST_QUEUE_THRESHOLD) / 160)
-              : 0;
-            const charsThisTick = Math.min(
-              rawQueue.length > 260 ? STREAM_REVEAL_BOOST_MAX_CHARS_PER_TICK : STREAM_REVEAL_MAX_CHARS_PER_TICK,
-              STREAM_REVEAL_BASE_CHARS_PER_TICK + queueBoost
-            );
-            const nextSlice = rawQueue.slice(0, charsThisTick);
-            rawQueue = rawQueue.slice(charsThisTick);
-            visibleText += nextSlice;
-            setAssistantThread([...nextThread, { role: "assistant", text: visibleText }]);
-            if (autoScrollPinnedRef.current) {
-              scrollChatToBottom(false);
-            }
-          }
-        }
-      })();
 
       const flushSseEvents = () => {
         let separatorIndex = sseBuffer.indexOf("\n\n");
@@ -1377,7 +1322,11 @@ export default function InsightsPage() {
 
             const deltaText = parsed.choices?.[0]?.delta?.content;
             if (!stopGenerationRequestedRef.current && typeof deltaText === "string" && deltaText.length > 0) {
-              rawQueue += deltaText;
+              visibleText += deltaText;
+              setAssistantThread([...nextThread, { role: "assistant", text: visibleText }]);
+              if (autoScrollPinnedRef.current) {
+                scrollChatToBottom(false);
+              }
             }
           } catch (error) {
             if (error instanceof Error) {
@@ -1397,8 +1346,6 @@ export default function InsightsPage() {
       }
       sseBuffer += decoder.decode();
       flushSseEvents();
-      isStreaming = false;
-      await revealLoop;
       if (autoScrollPinnedRef.current) {
         scrollChatToBottom(true);
       }
@@ -1423,7 +1370,6 @@ export default function InsightsPage() {
       }
       setAssistantError(error instanceof Error ? error.message : "Failed to get AI response.");
     } finally {
-      isStreaming = false;
       assistantAbortRef.current = null;
       stopGenerationRequestedRef.current = false;
       setAssistantLoading(false);
@@ -1434,7 +1380,7 @@ export default function InsightsPage() {
     if (assistantLoading) return;
 
     const trimmed = visibleQuestion.trim();
-    if (!trimmed || !data || !aiContext) return;
+    if (!trimmed || !data) return;
 
     const historyBeforePrompt = assistantThread;
     const nextThread: AssistantMessage[] = [...historyBeforePrompt, { role: "user", text: trimmed }];
@@ -1446,7 +1392,7 @@ export default function InsightsPage() {
   }
 
   async function regenerateLastAnswer() {
-    if (assistantLoading || !data || !aiContext) return;
+    if (assistantLoading || !data) return;
 
     const lastUserIndex = getLastUserMessageIndex(assistantThread);
     if (lastUserIndex < 0) {
@@ -1472,7 +1418,7 @@ export default function InsightsPage() {
   }
 
   async function askFollowUpFromAnswer(answerText: string, mode: "explain" | "examples" | "shorter", index: number) {
-    if (assistantLoading || !data || !aiContext) return;
+    if (assistantLoading || !data) return;
 
     const sourceText = answerText.trim().slice(0, FOLLOW_UP_SOURCE_MAX_CHARS);
     if (!sourceText) return;
@@ -1686,7 +1632,10 @@ export default function InsightsPage() {
                                 </p>
                               );
                             }
-                            const sections = splitAssistantSections(message.text);
+                            const sections =
+                              assistantOutputMode === "fitness_structured"
+                                ? splitAssistantSections(message.text)
+                                : null;
                             if (!sections) {
                               return (
                                 <>

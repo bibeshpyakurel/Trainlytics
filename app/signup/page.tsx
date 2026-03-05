@@ -13,6 +13,7 @@ import { ROUTES, getDefaultSignedInRoute, getSafeProtectedNextRoute } from "@/li
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { reportClientError } from "@/lib/monitoringClient";
 import { runAuthSessionPreflight } from "@/lib/authPreflight";
+import { markSessionActivity } from "@/lib/sessionTimeout";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
@@ -72,6 +73,7 @@ export default function SignUpPage() {
         showError("Could not verify your session. Please try again.");
       },
       onAuthenticated: () => {
+        markSessionActivity();
         const launchAnimationEnabled =
           localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
         const nextParam = readNextParam();
@@ -169,6 +171,7 @@ export default function SignUpPage() {
     setLoading(false);
 
     if (hasSession) {
+      markSessionActivity();
       const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
       const nextParam = readNextParam();
       const nextRoute = getSafeProtectedNextRoute(nextParam);
@@ -246,6 +249,7 @@ export default function SignUpPage() {
     setLoading(false);
 
     if (data.session) {
+      markSessionActivity();
       const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
       const nextParam = readNextParam();
       const nextRoute = getSafeProtectedNextRoute(nextParam);

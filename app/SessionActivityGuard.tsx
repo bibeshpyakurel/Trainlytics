@@ -8,8 +8,9 @@ import { buildSessionExpiredPath, isProtectedRoute } from "@/lib/routes";
 import {
   SESSION_LAST_ACTIVITY_STORAGE_KEY,
   SESSION_MAX_AGE_MS,
-  SESSION_STARTED_AT_COOKIE,
-  formatSessionCookieValue,
+  clearSessionActivityMarkers,
+  markSessionActivity,
+  parseSessionStartedAtFromCookieHeader,
   parseSessionStartedAt,
 } from "@/lib/sessionTimeout";
 
@@ -19,15 +20,12 @@ function getNow() {
   return Date.now();
 }
 
-function persistLastActivity(nextTimestampMs: number) {
-  const value = formatSessionCookieValue(nextTimestampMs);
-  localStorage.setItem(SESSION_LAST_ACTIVITY_STORAGE_KEY, value);
-  document.cookie = `${SESSION_STARTED_AT_COOKIE}=${value}; path=/; samesite=lax`;
-}
-
 function resolveLastActivityMs() {
   const fromStorage = parseSessionStartedAt(localStorage.getItem(SESSION_LAST_ACTIVITY_STORAGE_KEY) ?? undefined);
+  const fromCookie = parseSessionStartedAtFromCookieHeader(document.cookie);
+  if (fromStorage && fromCookie) return Math.max(fromStorage, fromCookie);
   if (fromStorage) return fromStorage;
+  if (fromCookie) return fromCookie;
   return getNow();
 }
 
@@ -59,7 +57,7 @@ export default function SessionActivityGuard() {
         return;
       }
       const now = getNow();
-      persistLastActivity(now);
+      markSessionActivity(now);
       scheduleFrom(now);
     };
 
@@ -74,8 +72,7 @@ export default function SessionActivityGuard() {
       expired = true;
 
       const nextPath = pathname;
-      localStorage.removeItem(SESSION_LAST_ACTIVITY_STORAGE_KEY);
-      document.cookie = `${SESSION_STARTED_AT_COOKIE}=; path=/; max-age=0; samesite=lax`;
+      clearSessionActivityMarkers();
 
       await supabase.auth.signOut();
       clearAccountScopedClientState();
@@ -84,7 +81,7 @@ export default function SessionActivityGuard() {
     };
 
     const initialLastActivityMs = resolveLastActivityMs();
-    persistLastActivity(initialLastActivityMs);
+    markSessionActivity(initialLastActivityMs);
     scheduleFrom(initialLastActivityMs);
 
     USER_ACTIVITY_EVENTS.forEach((eventName) => {

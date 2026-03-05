@@ -11,6 +11,21 @@ import type { Database } from "@/lib/supabaseTypes";
 
 export type InsightsAiContext = {
   firstName: string | null;
+  profile: {
+    firstName: string | null;
+    lastName: string | null;
+    sex: Database["public"]["Enums"]["profile_sex_type"] | null;
+    gender: Database["public"]["Enums"]["profile_sex_type"] | null;
+    birthDate: string | null;
+    heightCm: number | null;
+    activityLevel: Database["public"]["Enums"]["activity_level_type"] | null;
+    maintenanceKcalCurrent: number | null;
+    maintenanceMethod: Database["public"]["Enums"]["maintenance_method_type"] | null;
+    maintenanceUpdatedAt: string | null;
+    bmiCurrent: number | null;
+    latestWeightKgForBmi: number | null;
+    latestWeightLbForBmi: number | null;
+  };
   facts: Array<{ label: string; value: string; detail: string }>;
   correlations: Array<{ label: string; value: number | null; interpretation: string; overlapDays: number }>;
   improvements: string[];
@@ -141,7 +156,7 @@ export async function loadInsightsAiContextForUser(
   const oneYearAgoIso = toIsoDate(oneYearAgo);
   const todayIso = toIsoDate(new Date());
 
-  const [bodyweightRes, caloriesRes, metabolicRes, dailyEnergyRes, workoutSetsRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
+  const [bodyweightRes, caloriesRes, metabolicRes, dailyEnergyRes, workoutSessionsRes, exercisesRes, profileRes] = await Promise.all([
     supabase
       .from(TABLES.bodyweightLogs)
       .select("log_date,weight_input,unit_input,weight_kg")
@@ -163,12 +178,6 @@ export async function loadInsightsAiContextForUser(
       .eq("user_id", userId)
       .order("log_date", { ascending: true }),
     supabase
-      .from(TABLES.workoutSets)
-      .select("session_id,exercise_id,set_number,reps,weight_input")
-      .eq("user_id", userId)
-      .not("reps", "is", null)
-      .not("weight_input", "is", null),
-    supabase
       .from(TABLES.workoutSessions)
       .select("id,session_date,split")
       .eq("user_id", userId),
@@ -178,7 +187,7 @@ export async function loadInsightsAiContextForUser(
       .eq("user_id", userId),
     supabase
       .from(TABLES.profiles)
-      .select("first_name")
+      .select("first_name,last_name,sex,birth_date,height_cm,activity_level,maintenance_kcal_current,maintenance_method,maintenance_updated_at")
       .eq("user_id", userId)
       .maybeSingle(),
   ]);
@@ -187,7 +196,6 @@ export async function loadInsightsAiContextForUser(
   if (caloriesRes.error) throw caloriesRes.error;
   if (metabolicRes.error) throw metabolicRes.error;
   if (dailyEnergyRes.error) throw dailyEnergyRes.error;
-  if (workoutSetsRes.error) throw workoutSetsRes.error;
   if (workoutSessionsRes.error) throw workoutSessionsRes.error;
   if (exercisesRes.error) throw exercisesRes.error;
 
@@ -215,11 +223,25 @@ export async function loadInsightsAiContextForUser(
       value: intake - Number(spendByDate.get(date) ?? 0),
     }));
 
-  const sessionDateById = new Map((workoutSessionsRes.data ?? []).map((row) => [row.id, row.session_date]));
+  const workoutSessionsInYear = (workoutSessionsRes.data ?? [])
+    .filter((row) => row.session_date >= oneYearAgoIso)
+    .sort((a, b) => a.session_date.localeCompare(b.session_date));
+  const workoutSessionIdSet = new Set(workoutSessionsInYear.map((row) => row.id));
+  const workoutSetsDetailed = workoutSessionsInYear.length
+    ? await supabase
+        .from(TABLES.workoutSets)
+        .select("session_id,exercise_id,set_number,reps,weight_input,unit_input,weight_kg,duration_seconds")
+        .eq("user_id", userId)
+        .in("session_id", workoutSessionsInYear.map((row) => row.id))
+    : { data: [], error: null };
+  if (workoutSetsDetailed.error) throw workoutSetsDetailed.error;
+
+  const sessionDateById = new Map(workoutSessionsInYear.map((row) => [row.id, row.session_date]));
   const exerciseMetaById = new Map((exercisesRes.data ?? []).map((row) => [row.id, { name: row.name, muscleGroup: row.muscle_group }]));
 
   const strengthRows: StrengthSetLog[] = [];
-  for (const setRow of workoutSetsRes.data ?? []) {
+  for (const setRow of workoutSetsDetailed.data ?? []) {
+    if (setRow.reps == null || setRow.weight_input == null) continue;
     const sessionDate = sessionDateById.get(setRow.session_id);
     const exerciseMeta = exerciseMetaById.get(setRow.exercise_id);
     if (!sessionDate || !exerciseMeta) continue;
@@ -302,6 +324,11 @@ export async function loadInsightsAiContextForUser(
     date: point.date,
     totalKcal: point.value,
   }));
+  const latestWeightKg = bodyweightSeries.at(-1)?.value ?? null;
+  const latestWeightLb = latestWeightKg != null ? Number((latestWeightKg * LB_PER_KG).toFixed(2)) : null;
+  const heightCm = profileRes.data?.height_cm != null ? Number(profileRes.data.height_cm) : null;
+  const heightM = heightCm != null && heightCm > 0 ? heightCm / 100 : null;
+  const bmiCurrent = latestWeightKg != null && heightM != null ? Number((latestWeightKg / (heightM * heightM)).toFixed(2)) : null;
   const weightByDate = new Map(bodyweightSeries.map((point) => [point.date, point.value]));
   const caloriesByDate = new Map(caloriesSeries.map((point) => [point.date, point.value]));
   const burnByDate = new Map(metabolicActivitySeries.map((point) => [point.date, point.value]));
@@ -318,19 +345,6 @@ export async function loadInsightsAiContextForUser(
       },
     ])
   );
-
-  const workoutSessionsInYear = (workoutSessionsRes.data ?? [])
-    .filter((row) => row.session_date >= oneYearAgoIso)
-    .sort((a, b) => a.session_date.localeCompare(b.session_date));
-  const workoutSessionIdSet = new Set(workoutSessionsInYear.map((row) => row.id));
-  const workoutSetsDetailed = workoutSessionsInYear.length
-    ? await supabase
-        .from(TABLES.workoutSets)
-        .select("session_id,exercise_id,set_number,reps,weight_input,unit_input,weight_kg,duration_seconds")
-        .eq("user_id", userId)
-        .in("session_id", workoutSessionsInYear.map((row) => row.id))
-    : { data: [], error: null };
-  if (workoutSetsDetailed.error) throw workoutSetsDetailed.error;
 
   const setsBySession = new Map<string, Array<{
     exerciseId: string;
@@ -465,6 +479,25 @@ export async function loadInsightsAiContextForUser(
 
   return {
     firstName: (profileRes.data?.first_name as string | null | undefined) ?? null,
+    profile: {
+      firstName: (profileRes.data?.first_name as string | null | undefined) ?? null,
+      lastName: (profileRes.data?.last_name as string | null | undefined) ?? null,
+      sex: (profileRes.data?.sex as Database["public"]["Enums"]["profile_sex_type"] | null | undefined) ?? null,
+      gender: (profileRes.data?.sex as Database["public"]["Enums"]["profile_sex_type"] | null | undefined) ?? null,
+      birthDate: (profileRes.data?.birth_date as string | null | undefined) ?? null,
+      heightCm,
+      activityLevel:
+        (profileRes.data?.activity_level as Database["public"]["Enums"]["activity_level_type"] | null | undefined) ?? null,
+      maintenanceKcalCurrent:
+        profileRes.data?.maintenance_kcal_current != null ? Number(profileRes.data.maintenance_kcal_current) : null,
+      maintenanceMethod:
+        (profileRes.data?.maintenance_method as Database["public"]["Enums"]["maintenance_method_type"] | null | undefined) ??
+        null,
+      maintenanceUpdatedAt: (profileRes.data?.maintenance_updated_at as string | null | undefined) ?? null,
+      bmiCurrent,
+      latestWeightKgForBmi: latestWeightKg,
+      latestWeightLbForBmi: latestWeightLb,
+    },
     facts: view.facts,
     correlations: view.correlations,
     improvements: view.improvements,
