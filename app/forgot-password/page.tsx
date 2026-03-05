@@ -11,6 +11,7 @@ import { ROUTES, getDefaultSignedInRoute } from "@/lib/routes";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { reportClientError } from "@/lib/monitoringClient";
 import { runAuthSessionPreflight } from "@/lib/authPreflight";
+import { markSessionActivity } from "@/lib/sessionTimeout";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (value: string) => value.length >= 8 },
@@ -58,6 +59,7 @@ export default function ForgotPasswordPage() {
         showError("Could not verify your session. Please try again.");
       },
       onAuthenticated: () => {
+        markSessionActivity();
         const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
         router.replace(getDefaultSignedInRoute(launchAnimationEnabled));
       },
@@ -166,6 +168,7 @@ export default function ForgotPasswordPage() {
     }
 
     showSuccess("Password updated successfully.");
+    markSessionActivity();
     const launchAnimationEnabled = localStorage.getItem(STORAGE_KEYS.launchAnimationEnabled) !== "false";
     router.replace(getDefaultSignedInRoute(launchAnimationEnabled));
   }

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { ROUTES, getSafeProtectedNextRoute } from "@/lib/routes";
+import { clearSessionActivityMarkers } from "@/lib/sessionTimeout";
 
 function readNextParam() {
   if (typeof window === "undefined") return null;
@@ -10,6 +11,10 @@ function readNextParam() {
 }
 
 export default function SessionExpiredPage() {
+  useEffect(() => {
+    clearSessionActivityMarkers();
+  }, []);
+
   const loginHref = useMemo(() => {
     const safeNext = getSafeProtectedNextRoute(readNextParam());
     const params = new URLSearchParams();

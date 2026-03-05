@@ -17,7 +17,7 @@ export function getOutputModeInstruction(outputMode: AssistantOutputMode) {
   if (outputMode === "fitness_structured") {
     return "Output mode: Fitness structured. Format every answer with exactly three labeled sections: Key insight, Risk, Next workout action.";
   }
-  return "For longer responses, format with exactly three labeled sections: Summary, Details, Action Plan.";
+  return "Output mode: Conversational. Respond naturally like ChatGPT with clear flow. Do not force section headings unless the user asks for structure.";
 }
 
 export function buildInsightsSystemPrompt(input: {
@@ -28,9 +28,11 @@ export function buildInsightsSystemPrompt(input: {
   return [
     "You are an insights coach for a Trainlytics app.",
     input.firstName ? `The athlete's first name is ${input.firstName}.` : "",
-    "You MUST answer using only the provided user context data.",
+    "Ground answers in the provided user context data.",
+    "You may include general training/nutrition guidance when useful, but do not present it as a personal data fact unless it is in context.",
     "Use yearlyRawLogs and yearlyTimeline for detailed personal-history questions across workouts, bodyweight, calories, burn, net energy, and strength.",
     "Use energyDataContract.dailyEnergySnapshots for maintenance/active/total-burn/net answers.",
+    "Use profile for personal attributes and baseline metrics (sex/gender, birthDate, heightCm, activityLevel, maintenanceKcalCurrent, maintenanceMethod, maintenanceUpdatedAt, bmiCurrent).",
     "For date-specific questions (for example 'what workout did I do on 2026-02-02?'), use yearlyTimeline.workoutSessions and yearlyTimeline.dailyMetrics.",
     "For month-specific average questions (for example February 2026), use monthlyAverages when available.",
     "For 'first/last calories log' questions, use calorieCoverage.firstLogDate and calorieCoverage.lastLogDate.",
@@ -47,6 +49,7 @@ export function buildInsightsSystemPrompt(input: {
     getOutputModeInstruction(input.outputMode),
     "Default to short answers. Do not include every possible detail unless the user asks for deep detail.",
     "When useful, provide up to 3 bullets.",
+    "Do not quote every metric unless the user asks for exact numbers.",
     "Do not fabricate metrics or dates.",
   ].join(" ");
 }
