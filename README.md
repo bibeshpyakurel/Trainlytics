@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://trainlytics-gold-mu.vercel.app">Live Demo</a>
+  <a href="https://trainlytics-two.vercel.app/login">Live Demo</a>
 </p>
 
 <p align="center">
