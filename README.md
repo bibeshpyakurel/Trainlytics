@@ -22,6 +22,8 @@ Trainlytics is built for lifters who want low-friction tracking and trustworthy 
 
 - OTP-backed signup and password reset flows
 - Workout logging by split (`push`, `pull`, `legs`, `core`)
+- User-scoped exercise management with archive, unarchive, and permanent delete flows
+- Guided workout export by category, muscle group, or exercise in CSV, XLSX, and PDF
 - Bodyweight and calorie tracking
 - Dashboard and insights trends
 - Strong route guarding + Supabase RLS isolation
@@ -48,6 +50,7 @@ Trainlytics is built for lifters who want low-friction tracking and trustworthy 
 - React 19 + TypeScript
 - Tailwind CSS 4
 - Supabase (Auth, Postgres, Storage, RLS)
+- `xlsx`, `jspdf`, `jspdf-autotable` for workout exports
 - Vitest (unit tests)
 - Playwright (auth-critical E2E)
 
@@ -121,6 +124,13 @@ flowchart LR
 4. Server routes handle optional AI insights and operational monitoring.
 5. Client/server runtime errors are reported via `/api/monitoring/error`.
 
+### Key Product Behaviors
+
+- Active exercises are managed directly from the logger for faster workout setup.
+- Archived exercises are managed from Profile, where users can unarchive or permanently delete them.
+- Permanent delete removes the exercise row and related workout history from Supabase for that user.
+- Export is contextual to the logger and supports category-level, muscle-group-level, and exercise-level history downloads.
+
 ## Route Contract
 
 Public:
@@ -161,6 +171,13 @@ CI runs:
 - typecheck
 - unit tests
 - DB plan validation
+
+Recommended pre-publish check:
+
+```bash
+npm run check
+npm run build
+```
 
 ## Database Workflow
 
@@ -232,6 +249,8 @@ Where to view logs:
    - forgot-password OTP flow
    - protected-route redirect behavior
    - workout logging and cross-user isolation
+  - exercise archive, unarchive, and permanent delete
+  - export flow for category, muscle group, and exercise scopes
 
 ## Security
 

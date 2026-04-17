@@ -42,24 +42,16 @@ const DEFAULT_EXERCISE_SEEDS: DefaultExerciseSeed[] = [
 export async function ensureDefaultExercisesForUser(userId: string): Promise<string | null> {
   const { data: existingRows, error: existingError } = await supabase
     .from(TABLES.exercises)
-    .select("id,name,is_active")
+    .select("id")
     .eq("user_id", userId);
 
   if (existingError) {
     return existingError.message;
   }
 
-  const { data: workoutSetRows, error: workoutSetError } = await supabase
-    .from(TABLES.workoutSets)
-    .select("id")
-    .eq("user_id", userId)
-    .limit(1);
-
-  if (workoutSetError) {
-    return workoutSetError.message;
+  if ((existingRows ?? []).length > 0) {
+    return null;
   }
-
-  const hasWorkoutHistory = (workoutSetRows ?? []).length > 0;
 
   const payload = DEFAULT_EXERCISE_SEEDS.map((row) => ({
     user_id: userId,
@@ -71,31 +63,12 @@ export async function ensureDefaultExercisesForUser(userId: string): Promise<str
     is_active: true,
   }));
 
-  const { error: upsertError } = await supabase
+  const { error: insertError } = await supabase
     .from(TABLES.exercises)
-    .upsert(payload, { onConflict: "user_id,name" });
+    .insert(payload);
 
-  if (upsertError) {
-    return upsertError.message;
-  }
-
-  if (!hasWorkoutHistory) {
-    const allowedNames = new Set(DEFAULT_EXERCISE_SEEDS.map((row) => row.name));
-    const deactivateIds = (existingRows ?? [])
-      .filter((row) => !allowedNames.has(String(row.name)) && Boolean(row.is_active))
-      .map((row) => String(row.id));
-
-    if (deactivateIds.length > 0) {
-      const { error: deactivateError } = await supabase
-        .from(TABLES.exercises)
-        .update({ is_active: false })
-        .eq("user_id", userId)
-        .in("id", deactivateIds);
-
-      if (deactivateError) {
-        return deactivateError.message;
-      }
-    }
+  if (insertError) {
+    return insertError.message;
   }
 
   return null;

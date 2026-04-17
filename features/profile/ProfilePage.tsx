@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import SaveStatusOverlay from "@/features/profile/components/SaveStatusOverlay";
 import AvatarCropModal from "@/features/profile/components/AvatarCropModal";
 import DeleteAvatarConfirmModal from "@/features/profile/components/DeleteAvatarConfirmModal";
+import ExerciseLibrarySection from "@/features/profile/components/ExerciseLibrarySection";
 import { STORAGE_KEYS, setStoredBoolean } from "@/lib/preferences";
 import { clearAccountScopedClientState } from "@/lib/accountScopedClientState";
 import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
@@ -139,6 +140,7 @@ export default function ProfilePage() {
   const [maintenanceUpdatedAt, setMaintenanceUpdatedAt] = useState<string | null>(null);
   const normalizedFirstName = firstName.trim();
   const normalizedLastName = lastName.trim();
+  const isProfileBusy = isSigningOut || isSavingName || isUploadingAvatar || isUpdatingPassword || isSavingEnergyProfile;
   const isNameFormValid = useMemo(() => {
     if (!normalizedFirstName && !normalizedLastName) return false;
     if (normalizedFirstName && !NAME_PATTERN.test(normalizedFirstName)) return false;
@@ -941,6 +943,8 @@ export default function ProfilePage() {
               </label>
             </div>
           </section>
+
+          <ExerciseLibrarySection userId={userId} disabled={isProfileBusy} onStatus={setMsg} />
 
           <section className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
             <h2 className="text-lg font-semibold text-white">Account</h2>
