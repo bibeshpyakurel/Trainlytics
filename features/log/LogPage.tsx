@@ -20,7 +20,14 @@ import WeightedSetRow from "@/features/log/components/WeightedSetRow";
 import DurationSetRow from "@/features/log/components/DurationSetRow";
 import FeedbackOverlay from "@/features/log/components/overlays/FeedbackOverlay";
 import SavedWorkoutOverlay from "@/features/log/components/overlays/SavedWorkoutOverlay";
+import ExportFlowModal from "@/features/log/components/ExportFlowModal";
 import { createDefaultDurationPair, createDefaultWeightedPair, LOG_MESSAGES } from "@/features/log/constants";
+import {
+  archiveManagedExercise,
+  createManagedExercise,
+  type ExerciseDraft,
+} from "@/lib/exerciseManagement";
+import { type WorkoutExportScope } from "@/lib/workoutExport";
 import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
 import ConfirmModal from "@/shared/ui/ConfirmModal";
 import GradientButton from "@/shared/ui/GradientButton";
@@ -40,6 +47,12 @@ import type {
 } from "@/features/log/types";
 
 export default function LogWorkoutPage() {
+  const defaultExerciseDraft = (nextSplit: Split): ExerciseDraft => ({
+    name: "",
+    split: nextSplit,
+    muscleGroup: "",
+    metricType: nextSplit === "core" ? "DURATION" : "WEIGHTED_REPS",
+  });
   const today = useMemo(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -57,6 +70,13 @@ export default function LogWorkoutPage() {
   const [pendingSessionDelete, setPendingSessionDelete] = useState<PendingSessionDelete | null>(null);
   const [pendingSessionSummary, setPendingSessionSummary] = useState<PendingSessionSummary | null>(null);
   const [pendingSessionEdit, setPendingSessionEdit] = useState<PendingSessionEdit | null>(null);
+  const [exerciseDraft, setExerciseDraft] = useState<ExerciseDraft>(() => defaultExerciseDraft("push"));
+  const [isSavingExercise, setIsSavingExercise] = useState(false);
+  const [pendingExerciseArchive, setPendingExerciseArchive] = useState<Exercise | null>(null);
+  const [pendingExportRequest, setPendingExportRequest] = useState<{
+    scope: WorkoutExportScope;
+    userId: string;
+  } | null>(null);
   const [sessionSummaryItems, setSessionSummaryItems] = useState<SessionSummaryItem[]>([]);
   const [sessionSummaryLoading, setSessionSummaryLoading] = useState(false);
   const [summaryUnit, setSummaryUnit] = useState<Unit>("lb");
@@ -69,10 +89,26 @@ export default function LogWorkoutPage() {
     sessionDate: string;
     setCount: number;
   } | null>(null);
+  function toDisplayLabel(value: string) {
+    return value
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  function sortExercisesForDisplay(items: Exercise[]) {
+    return [...items].sort((a, b) => {
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return a.name.localeCompare(b.name);
+    });
+  }
   const isCurrentDate = date === today;
   const isGlobalBusy = busyAction !== null;
   const {
     exercises,
+    setExercises,
     lastSessionBySplit,
     recentSessions,
     weightedForm,
@@ -166,6 +202,10 @@ export default function LogWorkoutPage() {
   }, []);
 
   useEffect(() => {
+    setExerciseDraft(defaultExerciseDraft(split));
+  }, [split]);
+
+  useEffect(() => {
     if (!msg) return;
 
     const tone = /(failed|invalid|not logged|enter|cancelled|not allowed)/i.test(msg)
@@ -204,6 +244,97 @@ export default function LogWorkoutPage() {
       next[setIdx] = { seconds };
       return { ...prev, [exId]: next };
     });
+  }
+
+  function resetExerciseCreator(nextSplit: Split = split) {
+    setExerciseDraft(defaultExerciseDraft(nextSplit));
+  }
+
+  async function saveExerciseDefinition() {
+    if (isSavingExercise || isGlobalBusy || savingSetKey) return;
+
+    setIsSavingExercise(true);
+    setMsg(null);
+    try {
+      const userId = await requireUserId();
+      if (!userId) {
+        return;
+      }
+
+      const result = await createManagedExercise(userId, exerciseDraft);
+      if (!result.ok) {
+        setMsg(result.message);
+        return;
+      }
+
+      const createdExercise: Exercise = {
+        id: result.exercise.id,
+        name: result.exercise.name,
+        split: result.exercise.split,
+        muscle_group: result.exercise.muscle_group,
+        metric_type: result.exercise.metric_type,
+        sort_order: result.exercise.sort_order,
+      };
+
+      setExercises((current) => sortExercisesForDisplay([...current, createdExercise]));
+      if (createdExercise.metric_type === "WEIGHTED_REPS") {
+        setWeightedForm((current) => ({ ...current, [createdExercise.id]: createDefaultWeightedPair() }));
+      } else {
+        setDurationForm((current) => ({ ...current, [createdExercise.id]: createDefaultDurationPair() }));
+      }
+
+      resetExerciseCreator(split);
+      setMsg("Exercise added to this split ✅");
+    } finally {
+      setIsSavingExercise(false);
+    }
+  }
+
+  async function confirmArchiveExercise() {
+    if (!pendingExerciseArchive || isSavingExercise || isGlobalBusy || savingSetKey) return;
+    const target = pendingExerciseArchive;
+    setPendingExerciseArchive(null);
+    setMsg(null);
+
+    const userId = await requireUserId();
+    if (!userId) {
+      return;
+    }
+
+    const result = await archiveManagedExercise(userId, target.id);
+    if (!result.ok) {
+      setMsg(`Failed archiving exercise: ${result.message}`);
+      return;
+    }
+
+    setExercises((current) => current.filter((exercise) => exercise.id !== target.id));
+    setWeightedForm((current) => {
+      const next = { ...current };
+      delete next[target.id];
+      return next;
+    });
+    setDurationForm((current) => {
+      const next = { ...current };
+      delete next[target.id];
+      return next;
+    });
+    setLastModifiedBySetKey((current) => {
+      const next = { ...current };
+      delete next[makeSetKey(target.id, 1)];
+      delete next[makeSetKey(target.id, 2)];
+      return next;
+    });
+    setMsg("Exercise archived. Historical workout data remains available ✅");
+  }
+
+  async function requestScopeExport(scope: WorkoutExportScope) {
+    const userId = await requireUserId();
+    if (!userId) {
+      return;
+    }
+
+    setPendingExportRequest({ scope, userId });
+    setMsg(null);
   }
 
   function validateSessionDate() {
@@ -920,12 +1051,23 @@ export default function LogWorkoutPage() {
           </div>
 
           <div className="mt-4 rounded-2xl border border-zinc-700/70 bg-gradient-to-r from-zinc-900 via-zinc-900/95 to-zinc-800/70 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300/85">Session Reminder</p>
-            <p className="mt-2 text-sm text-zinc-200">
-              {selectedLastSession
-                ? `Last ${splitLabel} session: ${formatLastSessionDate(selectedLastSession.sessionDate)} · ${selectedLastSession.daysAgo} day${selectedLastSession.daysAgo === 1 ? "" : "s"} ago`
-                : `No ${splitLabel} session logged yet. Start your first one today.`}
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300/85">Session Reminder</p>
+                <p className="mt-2 text-sm text-zinc-200">
+                  {selectedLastSession
+                    ? `Last ${splitLabel} session: ${formatLastSessionDate(selectedLastSession.sessionDate)} · ${selectedLastSession.daysAgo} day${selectedLastSession.daysAgo === 1 ? "" : "s"} ago`
+                    : `No ${splitLabel} session logged yet. Start your first one today.`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void requestScopeExport({ level: "category", split, label: `${splitLabel} Category` })}
+                className="rounded-md border border-sky-400/60 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10"
+              >
+                Export {splitLabel}
+              </button>
+            </div>
           </div>
 
         </div>
@@ -933,12 +1075,45 @@ export default function LogWorkoutPage() {
         <div className="mt-6 space-y-6">
           {grouped.map(([muscle, list]) => (
             <div key={muscle} className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-              <h2 className="text-lg font-semibold capitalize text-white">{muscle}</h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold capitalize text-white">{muscle}</h2>
+                <button
+                  type="button"
+                  onClick={() => void requestScopeExport({ level: "muscle-group", muscleGroup: muscle, label: `${toDisplayLabel(muscle)} Muscle Group` })}
+                  className="rounded-md border border-sky-400/60 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10"
+                >
+                  Export {toDisplayLabel(muscle)}
+                </button>
+              </div>
 
               <div className="mt-4 space-y-4">
                 {list.map((ex) => (
                   <div key={ex.id} className="rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-4">
-                    <div className="font-medium text-zinc-100">{ex.name}</div>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-zinc-100">{ex.name}</div>
+                        <p className="mt-1 text-xs uppercase tracking-wide text-zinc-500">{ex.metric_type === "DURATION" ? "Duration" : "Weighted reps"}</p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void requestScopeExport({ level: "exercise", exerciseId: ex.id, label: ex.name })}
+                          disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                          className="rounded-md border border-sky-400/60 px-2 py-1 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10 disabled:opacity-50"
+                        >
+                          Export
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPendingExerciseArchive(ex)}
+                          disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                          className="rounded-md border border-amber-300/60 px-2 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/10 disabled:opacity-50"
+                        >
+                          Archive
+                        </button>
+                      </div>
+                    </div>
 
                     {ex.metric_type === "WEIGHTED_REPS" ? (
                       <div className="mt-3 grid gap-3">
@@ -1008,6 +1183,88 @@ export default function LogWorkoutPage() {
         </div>
 
         <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300/85">Exercise Controls</p>
+              <p className="mt-2 text-sm text-zinc-200">
+                Add exercises for your current <span className="font-semibold text-white">{splitLabel}</span> split without leaving the logger.
+              </p>
+            </div>
+            <p className="max-w-sm text-xs text-zinc-400">
+              Archive keeps your history intact. Permanent delete lives in Profile so it stays behind a stronger confirmation flow.
+            </p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto]">
+            <div>
+              <label htmlFor="log-exercise-name" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                Exercise name
+              </label>
+              <input
+                id="log-exercise-name"
+                value={exerciseDraft.name}
+                onChange={(event) => setExerciseDraft((current) => ({ ...current, name: event.target.value, split }))}
+                placeholder={`Add a ${splitLabel.toLowerCase()} exercise`}
+                disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2 disabled:opacity-60"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="log-exercise-muscle" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                Muscle group
+              </label>
+              <input
+                id="log-exercise-muscle"
+                value={exerciseDraft.muscleGroup}
+                onChange={(event) => setExerciseDraft((current) => ({ ...current, muscleGroup: event.target.value, split }))}
+                placeholder="e.g. chest, back, core"
+                disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2 disabled:opacity-60"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="log-exercise-metric" className="mb-1 block text-xs uppercase tracking-wide text-zinc-400">
+                Metric
+              </label>
+              <select
+                id="log-exercise-metric"
+                value={exerciseDraft.metricType}
+                onChange={(event) =>
+                  setExerciseDraft((current) => ({
+                    ...current,
+                    split,
+                    metricType: event.target.value as MetricType,
+                  }))
+                }
+                disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2 disabled:opacity-60"
+              >
+                <option value="WEIGHTED_REPS">Weighted reps</option>
+                <option value="DURATION">Duration</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <GradientButton
+              label={isSavingExercise ? "Saving..." : `Add ${splitLabel} Exercise`}
+              onClick={() => void saveExerciseDefinition()}
+              disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+            />
+            <button
+              type="button"
+              onClick={() => resetExerciseCreator(split)}
+              disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+              className="rounded-md border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">Last 5 Sessions</h2>
@@ -1034,7 +1291,7 @@ export default function LogWorkoutPage() {
                       type="button"
                       onClick={() => requestEditSessionDate(session)}
                       disabled={isGlobalBusy}
-                      className="rounded-md border border-zinc-500/70 px-2 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700/40 disabled:opacity-50"
+                      className="rounded-md border border-violet-400/60 px-2 py-1 text-xs font-medium text-violet-200 transition hover:bg-violet-500/10 disabled:opacity-50"
                     >
                       Edit
                     </button>
@@ -1093,6 +1350,21 @@ export default function LogWorkoutPage() {
           }
           onCancel={cancelDeleteSingleSet}
           confirmButton={<GradientButton label="Delete" tone="danger" onClick={() => void confirmDeleteSingleSet()} />}
+        />
+      )}
+
+      {pendingExerciseArchive && (
+        <ConfirmModal
+          titleTag="Archive Exercise"
+          title={`Archive ${pendingExerciseArchive.name}?`}
+          description={
+            <>
+              This removes <span className="font-semibold text-white">{pendingExerciseArchive.name}</span> from your active {splitLabel.toLowerCase()} list.
+              Historical workout data linked to this exercise will still be preserved and exportable.
+            </>
+          }
+          onCancel={() => setPendingExerciseArchive(null)}
+          confirmButton={<GradientButton label="Archive" onClick={() => void confirmArchiveExercise()} />}
         />
       )}
 
@@ -1236,6 +1508,15 @@ export default function LogWorkoutPage() {
           split={savedWorkoutOverlay.split}
           sessionDate={savedWorkoutOverlay.sessionDate}
           setCount={savedWorkoutOverlay.setCount}
+        />
+      )}
+
+      {pendingExportRequest && (
+        <ExportFlowModal
+          userId={pendingExportRequest.userId}
+          scope={pendingExportRequest.scope}
+          onClose={() => setPendingExportRequest(null)}
+          onStatus={setMsg}
         />
       )}
 

@@ -41,6 +41,7 @@ export function useLogSessionData({
   setMsg,
 }: UseLogSessionDataParams) {
   const requestTrackerRef = useRef(createRequestVersionTracker());
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [lastSessionBySplit, setLastSessionBySplit] = useState<Partial<Record<Split, LastSessionInfo>>>({});
   const [recentSessions, setRecentSessions] = useState<RecentWorkoutSession[]>([]);
@@ -117,6 +118,10 @@ export function useLogSessionData({
 
     setRecentSessions((data ?? []) as RecentWorkoutSession[]);
   }, [split]);
+
+  const reloadData = useCallback(() => {
+    setRefreshVersion((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     const tracker = requestTrackerRef.current;
@@ -344,10 +349,11 @@ export function useLogSessionData({
     return () => {
       tracker.invalidate();
     };
-  }, [date, isCurrentDate, loadLastSessions, loadRecentSessions, setMsg, split]);
+  }, [date, isCurrentDate, loadLastSessions, loadRecentSessions, refreshVersion, setMsg, split]);
 
   return {
     exercises,
+    setExercises,
     lastSessionBySplit,
     recentSessions,
     weightedForm,
@@ -360,5 +366,6 @@ export function useLogSessionData({
     setLastModifiedBySetKey,
     loadLastSessions,
     loadRecentSessions,
+    reloadData,
   };
 }
