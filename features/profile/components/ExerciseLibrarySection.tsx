@@ -10,6 +10,7 @@ import {
 } from "@/lib/exerciseManagement";
 import ConfirmModal from "@/shared/ui/ConfirmModal";
 import GradientButton from "@/shared/ui/GradientButton";
+import ArchivedBadge from "@/shared/ui/ArchivedBadge";
 
 type ExerciseLibrarySectionProps = {
   userId: string;
@@ -163,7 +164,10 @@ export default function ExerciseLibrarySection({ userId, disabled = false, onSta
           ) : (
             archivedExercises.map((exercise) => (
               <div key={exercise.id} className="rounded-xl border border-zinc-700/80 bg-zinc-900/60 px-4 py-3">
-                <p className="text-sm font-semibold text-zinc-100">{exercise.name}</p>
+                <p className="flex items-center text-sm font-semibold text-zinc-500 line-through">
+                  {exercise.name}
+                  <ArchivedBadge />
+                </p>
                 <p className="mt-1 text-xs text-zinc-400">
                   {formatSplit(exercise.split)} · {exercise.muscle_group} · {formatMetricType(exercise.metric_type)}
                 </p>

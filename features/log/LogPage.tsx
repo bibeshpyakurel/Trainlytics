@@ -31,6 +31,7 @@ import { type WorkoutExportScope } from "@/lib/workoutExport";
 import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
 import ConfirmModal from "@/shared/ui/ConfirmModal";
 import GradientButton from "@/shared/ui/GradientButton";
+import ArchiveWithReplacementModal from "@/shared/ui/ArchiveWithReplacementModal";
 import type {
   DurationSet,
   Exercise,
@@ -274,6 +275,8 @@ export default function LogWorkoutPage() {
         muscle_group: result.exercise.muscle_group,
         metric_type: result.exercise.metric_type,
         sort_order: result.exercise.sort_order,
+        is_active: true,
+        replaced_by_exercise_id: null,
       };
 
       setExercises((current) => sortExercisesForDisplay([...current, createdExercise]));
@@ -290,7 +293,7 @@ export default function LogWorkoutPage() {
     }
   }
 
-  async function confirmArchiveExercise() {
+  async function confirmArchiveExercise(replacedByExerciseId: string | null) {
     if (!pendingExerciseArchive || isSavingExercise || isGlobalBusy || savingSetKey) return;
     const target = pendingExerciseArchive;
     setPendingExerciseArchive(null);
@@ -301,7 +304,7 @@ export default function LogWorkoutPage() {
       return;
     }
 
-    const result = await archiveManagedExercise(userId, target.id);
+    const result = await archiveManagedExercise(userId, target.id, replacedByExerciseId);
     if (!result.ok) {
       setMsg(`Failed archiving exercise: ${result.message}`);
       return;
@@ -1354,17 +1357,13 @@ export default function LogWorkoutPage() {
       )}
 
       {pendingExerciseArchive && (
-        <ConfirmModal
-          titleTag="Archive Exercise"
-          title={`Archive ${pendingExerciseArchive.name}?`}
-          description={
-            <>
-              This removes <span className="font-semibold text-white">{pendingExerciseArchive.name}</span> from your active {splitLabel.toLowerCase()} list.
-              Historical workout data linked to this exercise will still be preserved and exportable.
-            </>
-          }
+        <ArchiveWithReplacementModal
+          exercise={pendingExerciseArchive}
+          activeExercisesInSplit={exercises.filter(
+            (e) => e.split === pendingExerciseArchive.split && e.id !== pendingExerciseArchive.id
+          )}
           onCancel={() => setPendingExerciseArchive(null)}
-          confirmButton={<GradientButton label="Archive" onClick={() => void confirmArchiveExercise()} />}
+          onConfirm={(replacedByExerciseId) => void confirmArchiveExercise(replacedByExerciseId)}
         />
       )}
 

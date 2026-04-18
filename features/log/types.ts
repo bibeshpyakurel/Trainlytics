@@ -10,6 +10,8 @@ export type Exercise = {
   muscle_group: string;
   metric_type: MetricType;
   sort_order: number;
+  is_active: boolean;
+  replaced_by_exercise_id?: string | null;
 };
 
 export type WeightedSet = { reps: string; weight: string; unit: Unit };

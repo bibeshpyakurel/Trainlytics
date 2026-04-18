@@ -34,7 +34,13 @@ type WorkoutSetRowForStrength = {
 };
 
 type WorkoutSessionRow = { id: string; session_date: string };
-type ExerciseMetaRow = { id: string; name: string; muscle_group: string };
+type ExerciseMetaRow = {
+  id: string;
+  name: string;
+  muscle_group: string;
+  is_active: boolean;
+  replaced_by_exercise_id: string | null;
+};
 type LatestWorkoutRow = { session_date: string; split: DashboardData["latestWorkout"] extends infer T ? T extends { split: infer S } ? S : never : never } | null;
 type LatestBodyweightRow = { log_date: string; weight_input: number; unit_input: DashboardData["latestBodyweight"] extends infer T ? T extends { unit_input: infer U } ? U : never : never } | null;
 type LatestCaloriesRow = { log_date: string; pre_workout_kcal: number | null; post_workout_kcal: number | null } | null;
@@ -61,12 +67,26 @@ export function buildStrengthRowsFromWorkoutData(
     sessionDateById.set(sessionRow.id, sessionRow.session_date);
   }
 
+  // Build a map of each exercise's canonical (successor) name by following replacement chains.
+  // If exercise A is replaced by B which is replaced by C, then A and B both resolve to C's name.
+  const exerciseById = new Map<string, ExerciseMetaRow>();
+  for (const ex of exercises) {
+    exerciseById.set(ex.id, ex);
+  }
+
+  function resolveCanonicalName(id: string, depth = 0): { name: string; muscleGroup: string | null } {
+    const ex = exerciseById.get(id);
+    if (!ex) return { name: "", muscleGroup: null };
+    if (ex.replaced_by_exercise_id && depth < 20) {
+      const successor = exerciseById.get(ex.replaced_by_exercise_id);
+      if (successor) return resolveCanonicalName(ex.replaced_by_exercise_id, depth + 1);
+    }
+    return { name: ex.name, muscleGroup: ex.muscle_group };
+  }
+
   const exerciseMetaById = new Map<string, { name: string; muscleGroup: string | null }>();
   for (const exerciseRow of exercises) {
-    exerciseMetaById.set(exerciseRow.id, {
-      name: exerciseRow.name,
-      muscleGroup: exerciseRow.muscle_group,
-    });
+    exerciseMetaById.set(exerciseRow.id, resolveCanonicalName(exerciseRow.id));
   }
 
   const strengthRows: StrengthSetLog[] = [];
@@ -136,6 +156,36 @@ export function buildDashboardDataFromResults(input: {
     if (!exerciseCategoryByName.has(row.exerciseName)) {
       exerciseCategoryByName.set(row.exerciseName, mapToExerciseTrendCategory(row.muscleGroup));
     }
+  }
+
+  // Build archived status map keyed by the canonical (displayed) name.
+  // A canonical name is archived only when no active exercise resolves to it.
+  const allExercises = input.exercises as ExerciseMetaRow[];
+  const exerciseByIdForArchive = new Map<string, ExerciseMetaRow>();
+  for (const e of allExercises) exerciseByIdForArchive.set(e.id, e);
+
+  function resolveCanonicalNameForArchive(id: string, depth = 0): string {
+    const e = exerciseByIdForArchive.get(id);
+    if (!e) return "";
+    if (e.replaced_by_exercise_id && depth < 20) {
+      const succ = exerciseByIdForArchive.get(e.replaced_by_exercise_id);
+      if (succ) return resolveCanonicalNameForArchive(e.replaced_by_exercise_id, depth + 1);
+    }
+    return e.name;
+  }
+
+  const activeCanonicalNames = new Set<string>();
+  const exerciseIsArchivedByName: Record<string, boolean> = {};
+  for (const ex of allExercises) {
+    const canonicalName = resolveCanonicalNameForArchive(ex.id);
+    if (!canonicalName) continue;
+    if (ex.is_active) activeCanonicalNames.add(canonicalName);
+    if (!(canonicalName in exerciseIsArchivedByName)) {
+      exerciseIsArchivedByName[canonicalName] = true;
+    }
+  }
+  for (const name of activeCanonicalNames) {
+    exerciseIsArchivedByName[name] = false;
   }
 
   const exerciseNamesByCategory: Record<ExerciseTrendCategory, string[]> = {
@@ -244,6 +294,7 @@ export function buildDashboardDataFromResults(input: {
     exerciseStrengthSeries: strengthDatasets.byExercise,
     exerciseNames: strengthDatasets.exerciseNames,
     exerciseNamesByCategory,
+    exerciseIsArchivedByName,
   };
 }
 
@@ -337,7 +388,7 @@ export async function loadDashboardData(window: DashboardChartWindow = "all"): P
         .eq("user_id", userId),
       supabase
         .from(TABLES.exercises)
-        .select("id,name,muscle_group")
+        .select("id,name,muscle_group,is_active,replaced_by_exercise_id")
         .eq("user_id", userId),
       supabase
         .from(TABLES.profiles)

@@ -77,7 +77,7 @@ describe("buildDashboardDataFromResults scenarios", () => {
       calories7dRows: [],
       metabolic7dRows: [],
       workoutSessions: [{ id: "s1", session_date: "2026-02-20" }],
-      exercises: [{ id: "e1", name: "Bench Press", muscle_group: "chest" }],
+      exercises: [{ id: "e1", name: "Bench Press", muscle_group: "chest", is_active: true, replaced_by_exercise_id: null }],
       workoutSetRows: [
         {
           session_id: "s1",
@@ -144,7 +144,7 @@ describe("buildDashboardDataFromResults scenarios", () => {
       calories7dRows: [],
       metabolic7dRows: [],
       workoutSessions: sessions,
-      exercises: [{ id: "e1", name: "Bench Press", muscle_group: "chest" }],
+      exercises: [{ id: "e1", name: "Bench Press", muscle_group: "chest", is_active: true, replaced_by_exercise_id: null }],
       workoutSetRows,
     });
 

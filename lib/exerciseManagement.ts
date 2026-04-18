@@ -198,7 +198,7 @@ export function downloadCsvFile(filename: string, csv: string) {
 export async function loadManagedExercises(userId: string) {
   const { data: exerciseRows, error: exerciseError } = await supabase
     .from(TABLES.exercises)
-    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,created_at")
+    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,created_at")
     .eq("user_id", userId);
 
   if (exerciseError) {
@@ -273,8 +273,9 @@ export async function createManagedExercise(userId: string, draft: ExerciseDraft
       metric_type: validated.value.metricType,
       sort_order: sortOrderResult.sortOrder,
       is_active: true,
+      replaced_by_exercise_id: null,
     })
-    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,created_at")
+    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,created_at")
     .single();
 
   if (error || !data) {
@@ -351,10 +352,14 @@ export async function updateManagedExercise(userId: string, exerciseId: string, 
   return { ok: true as const };
 }
 
-export async function archiveManagedExercise(userId: string, exerciseId: string) {
+export async function archiveManagedExercise(
+  userId: string,
+  exerciseId: string,
+  replacedByExerciseId?: string | null
+) {
   const { error } = await supabase
     .from(TABLES.exercises)
-    .update({ is_active: false })
+    .update({ is_active: false, replaced_by_exercise_id: replacedByExerciseId ?? null })
     .eq("id", exerciseId)
     .eq("user_id", userId);
 
@@ -363,6 +368,49 @@ export async function archiveManagedExercise(userId: string, exerciseId: string)
   }
 
   return { ok: true as const };
+}
+
+export async function resolveExercisePredecessorIds(
+  userId: string,
+  exerciseId: string
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from(TABLES.exercises)
+    .select("id,replaced_by_exercise_id")
+    .eq("user_id", userId)
+    .not("replaced_by_exercise_id", "is", null);
+
+  if (error || !data) return [];
+
+  // Build reverse map: successorId -> list of direct predecessor IDs
+  const predecessorsOf = new Map<string, string[]>();
+  for (const row of data as Array<{ id: string; replaced_by_exercise_id: string | null }>) {
+    if (!row.replaced_by_exercise_id) continue;
+    const list = predecessorsOf.get(row.replaced_by_exercise_id) ?? [];
+    list.push(row.id);
+    predecessorsOf.set(row.replaced_by_exercise_id, list);
+  }
+
+  // BFS backwards from exerciseId collecting all ancestors, cap at 20 hops
+  const result: string[] = [];
+  const visited = new Set<string>([exerciseId]);
+  const queue = [exerciseId];
+  let hops = 0;
+
+  while (queue.length > 0 && hops < 20) {
+    const current = queue.shift()!;
+    const parents = predecessorsOf.get(current) ?? [];
+    for (const parentId of parents) {
+      if (!visited.has(parentId)) {
+        visited.add(parentId);
+        result.push(parentId);
+        queue.push(parentId);
+      }
+    }
+    hops++;
+  }
+
+  return result;
 }
 
 export async function restoreManagedExercise(userId: string, exerciseId: string, split: Split) {

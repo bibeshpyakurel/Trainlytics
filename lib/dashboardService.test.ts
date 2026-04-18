@@ -16,7 +16,7 @@ describe("dashboardService strength normalization", () => {
         },
       ],
       [{ id: "s1", session_date: "2026-02-20" }],
-      [{ id: "e1", name: "Bench Press", muscle_group: "chest" }]
+      [{ id: "e1", name: "Bench Press", muscle_group: "chest", is_active: true, replaced_by_exercise_id: null }]
     );
 
     expect(rows).toHaveLength(1);
@@ -55,7 +55,7 @@ describe("dashboardService strength normalization", () => {
         },
       ],
       [{ id: "s1", session_date: "2026-02-20" }],
-      [{ id: "e1", name: "Barbell Row", muscle_group: "back" }]
+      [{ id: "e1", name: "Barbell Row", muscle_group: "back", is_active: true, replaced_by_exercise_id: null }]
     );
 
     expect(rows).toHaveLength(2);
