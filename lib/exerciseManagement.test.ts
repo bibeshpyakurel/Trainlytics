@@ -4,6 +4,7 @@ import {
   getWorkoutExportFileName,
   normalizeExerciseName,
   normalizeMuscleGroup,
+  validateArchivedExerciseReplacementLink,
   validateExerciseDraft,
 } from "@/lib/exerciseManagement";
 
@@ -65,5 +66,31 @@ describe("exerciseManagement", () => {
       })
     ).toBe("trainlytics-workouts-2026-04-01-to-2026-04-17.csv");
     expect(getWorkoutExportFileName({ mode: "all" })).toBe("trainlytics-workouts-all-history.csv");
+  });
+
+  it("validates archived replacement links", () => {
+    expect(
+      validateArchivedExerciseReplacementLink({
+        archivedExercise: { id: "archived", split: "push", metric_type: "WEIGHTED_REPS", is_active: false },
+        replacementExercise: { id: "active", split: "push", metric_type: "WEIGHTED_REPS", is_active: true },
+        replacementPredecessorIds: [],
+      })
+    ).toEqual({ ok: true });
+
+    expect(
+      validateArchivedExerciseReplacementLink({
+        archivedExercise: { id: "archived", split: "push", metric_type: "WEIGHTED_REPS", is_active: false },
+        replacementExercise: { id: "active", split: "pull", metric_type: "WEIGHTED_REPS", is_active: true },
+        replacementPredecessorIds: [],
+      })
+    ).toEqual({ ok: false, message: "Replacement exercises must stay in the same split." });
+
+    expect(
+      validateArchivedExerciseReplacementLink({
+        archivedExercise: { id: "archived", split: "push", metric_type: "WEIGHTED_REPS", is_active: false },
+        replacementExercise: { id: "active", split: "push", metric_type: "WEIGHTED_REPS", is_active: true },
+        replacementPredecessorIds: ["archived"],
+      })
+    ).toEqual({ ok: false, message: "This replacement would create a cycle in the exercise chain." });
   });
 });

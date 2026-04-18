@@ -297,7 +297,7 @@ export default function DashboardPage() {
                 <p className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-zinc-400">
                   {selectedExercises.length > 0 ? (
                     <>
-                      <span>Using top exercises:</span>
+                      <span>Using current top exercises:</span>
                       {selectedExercises.map((name, i) => {
                         const isArchived = data?.exerciseIsArchivedByName[name] ?? false;
                         return (

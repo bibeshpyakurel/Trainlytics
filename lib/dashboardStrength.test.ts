@@ -178,4 +178,24 @@ describe("dashboardStrength", () => {
     expect(datasets.seriesByMuscleGroup.back.length).toBeGreaterThan(0);
     expect(datasets.seriesByMuscleGroup.bicep.length).toBeGreaterThan(0);
   });
+
+  it("prefers recent active exercises over stale archived ones when selecting muscle-group trends", () => {
+    const rows: StrengthSetLog[] = [
+      { date: "2026-02-01", exerciseName: "Overhead Tricep Press", muscleGroup: "Tricep", setNumber: 1, weight: 70, reps: 10 },
+      { date: "2026-02-08", exerciseName: "Overhead Tricep Press", muscleGroup: "Tricep", setNumber: 1, weight: 75, reps: 10 },
+      { date: "2026-02-15", exerciseName: "Triceps Push Down", muscleGroup: "Tricep", setNumber: 1, weight: 80, reps: 10 },
+      { date: "2026-02-22", exerciseName: "Overhead Cable Extension", muscleGroup: "Tricep", setNumber: 1, weight: 45, reps: 12 },
+    ];
+
+    const sessionScores = computeSessionStrengthByExerciseDate(rows);
+    const datasets = buildMuscleGroupStrengthDatasets(sessionScores, "sum", 1, {
+      exerciseIsArchivedByName: {
+        "Overhead Tricep Press": true,
+        "Triceps Push Down": false,
+        "Overhead Cable Extension": false,
+      },
+    });
+
+    expect(datasets.selectedExercisesByMuscleGroup.tricep).toEqual(["Overhead Cable Extension"]);
+  });
 });

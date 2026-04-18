@@ -152,4 +152,74 @@ describe("buildDashboardDataFromResults scenarios", () => {
     expect(data.exerciseStrengthSeries["Bench Press"]?.length).toBeGreaterThan(0);
     expect(data.muscleGroupStrengthSeries.chest.length).toBeGreaterThan(0);
   });
+
+  it("merges archived predecessor history into the current replacement exercise", () => {
+    const data = buildDashboardDataFromResults({
+      userEmail: "replacement@example.com",
+      firstName: "Replace",
+      latestWorkout: { session_date: "2026-02-22", split: "push" },
+      latestBodyweight: null,
+      latestCalories: null,
+      latestMetabolicBurn: null,
+      caloriesSeriesRows: [],
+      metabolicSeriesRows: [],
+      calories7dRows: [],
+      metabolic7dRows: [],
+      workoutSessions: [
+        { id: "s1", session_date: "2026-02-01" },
+        { id: "s2", session_date: "2026-02-08" },
+        { id: "s3", session_date: "2026-02-22" },
+      ],
+      exercises: [
+        {
+          id: "e1",
+          name: "Overhead Tricep Press",
+          muscle_group: "tricep",
+          is_active: false,
+          replaced_by_exercise_id: "e2",
+        },
+        {
+          id: "e2",
+          name: "Overhead Cable Extension",
+          muscle_group: "tricep",
+          is_active: true,
+          replaced_by_exercise_id: null,
+        },
+      ],
+      workoutSetRows: [
+        {
+          session_id: "s1",
+          exercise_id: "e1",
+          set_number: 1,
+          reps: 10,
+          weight_input: 70,
+          unit_input: "lb",
+          weight_kg: null,
+        },
+        {
+          session_id: "s2",
+          exercise_id: "e1",
+          set_number: 1,
+          reps: 10,
+          weight_input: 75,
+          unit_input: "lb",
+          weight_kg: null,
+        },
+        {
+          session_id: "s3",
+          exercise_id: "e2",
+          set_number: 1,
+          reps: 12,
+          weight_input: 45,
+          unit_input: "lb",
+          weight_kg: null,
+        },
+      ],
+    });
+
+    expect(data.exerciseNames).toEqual(["Overhead Cable Extension"]);
+    expect(data.exerciseStrengthSeries["Overhead Cable Extension"]).toHaveLength(3);
+    expect(data.selectedExercisesByMuscleGroup.tricep).toContain("Overhead Cable Extension");
+    expect(data.exerciseIsArchivedByName["Overhead Cable Extension"]).toBe(false);
+  });
 });

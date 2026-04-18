@@ -141,25 +141,6 @@ export function buildDashboardDataFromResults(input: {
   );
 
   const sessionStrengthScores = computeSessionStrengthByExerciseDate(strengthRows);
-  const strengthDatasets = buildStrengthProgressDatasets(
-    sessionStrengthScores,
-    DEFAULT_STRENGTH_AGGREGATION_MODE
-  );
-  const muscleGroupDatasets = buildMuscleGroupStrengthDatasets(
-    sessionStrengthScores,
-    DEFAULT_STRENGTH_AGGREGATION_MODE,
-    2
-  );
-
-  const exerciseCategoryByName = new Map<string, ExerciseTrendCategory>();
-  for (const row of sessionStrengthScores) {
-    if (!exerciseCategoryByName.has(row.exerciseName)) {
-      exerciseCategoryByName.set(row.exerciseName, mapToExerciseTrendCategory(row.muscleGroup));
-    }
-  }
-
-  // Build archived status map keyed by the canonical (displayed) name.
-  // A canonical name is archived only when no active exercise resolves to it.
   const allExercises = input.exercises as ExerciseMetaRow[];
   const exerciseByIdForArchive = new Map<string, ExerciseMetaRow>();
   for (const e of allExercises) exerciseByIdForArchive.set(e.id, e);
@@ -186,6 +167,24 @@ export function buildDashboardDataFromResults(input: {
   }
   for (const name of activeCanonicalNames) {
     exerciseIsArchivedByName[name] = false;
+  }
+
+  const strengthDatasets = buildStrengthProgressDatasets(
+    sessionStrengthScores,
+    DEFAULT_STRENGTH_AGGREGATION_MODE
+  );
+  const muscleGroupDatasets = buildMuscleGroupStrengthDatasets(
+    sessionStrengthScores,
+    DEFAULT_STRENGTH_AGGREGATION_MODE,
+    2,
+    { exerciseIsArchivedByName }
+  );
+
+  const exerciseCategoryByName = new Map<string, ExerciseTrendCategory>();
+  for (const row of sessionStrengthScores) {
+    if (!exerciseCategoryByName.has(row.exerciseName)) {
+      exerciseCategoryByName.set(row.exerciseName, mapToExerciseTrendCategory(row.muscleGroup));
+    }
   }
 
   const exerciseNamesByCategory: Record<ExerciseTrendCategory, string[]> = {
