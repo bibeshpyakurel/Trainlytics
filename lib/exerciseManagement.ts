@@ -38,6 +38,8 @@ export type WorkoutExportRow = {
   durationSeconds: number | null;
 };
 
+type ReplacementLinkExercise = Pick<ExerciseRow, "id" | "split" | "metric_type" | "is_active">;
+
 const SPLIT_ORDER: Split[] = ["push", "pull", "legs", "core"];
 const NAME_MAX_LENGTH = 80;
 const MUSCLE_GROUP_MAX_LENGTH = 40;
@@ -193,6 +195,44 @@ export function downloadCsvFile(filename: string, csv: string) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(blobUrl);
+}
+
+export function validateArchivedExerciseReplacementLink(input: {
+  archivedExercise: ReplacementLinkExercise;
+  replacementExercise: ReplacementLinkExercise | null;
+  replacementPredecessorIds?: string[];
+}) {
+  const { archivedExercise, replacementExercise, replacementPredecessorIds = [] } = input;
+
+  if (archivedExercise.is_active) {
+    return { ok: false as const, message: "Only archived exercises can be linked to a replacement." };
+  }
+
+  if (!replacementExercise) {
+    return { ok: true as const };
+  }
+
+  if (replacementExercise.id === archivedExercise.id) {
+    return { ok: false as const, message: "An exercise cannot replace itself." };
+  }
+
+  if (!replacementExercise.is_active) {
+    return { ok: false as const, message: "Choose an active exercise as the replacement." };
+  }
+
+  if (replacementExercise.split !== archivedExercise.split) {
+    return { ok: false as const, message: "Replacement exercises must stay in the same split." };
+  }
+
+  if (replacementExercise.metric_type !== archivedExercise.metric_type) {
+    return { ok: false as const, message: "Replacement exercises must use the same metric type." };
+  }
+
+  if (replacementPredecessorIds.includes(archivedExercise.id)) {
+    return { ok: false as const, message: "This replacement would create a cycle in the exercise chain." };
+  }
+
+  return { ok: true as const };
 }
 
 export async function loadManagedExercises(userId: string) {
@@ -370,6 +410,71 @@ export async function archiveManagedExercise(
   return { ok: true as const };
 }
 
+export async function updateArchivedExerciseReplacement(
+  userId: string,
+  exerciseId: string,
+  replacedByExerciseId: string | null
+) {
+  const { data: archivedExercise, error: archivedExerciseError } = await supabase
+    .from(TABLES.exercises)
+    .select("id,split,metric_type,is_active")
+    .eq("id", exerciseId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (archivedExerciseError) {
+    return { ok: false as const, message: archivedExerciseError.message };
+  }
+
+  if (!archivedExercise) {
+    return { ok: false as const, message: "Exercise not found." };
+  }
+
+  let replacementExercise: ReplacementLinkExercise | null = null;
+  let replacementPredecessorIds: string[] = [];
+
+  if (replacedByExerciseId) {
+    const { data: replacementRow, error: replacementError } = await supabase
+      .from(TABLES.exercises)
+      .select("id,split,metric_type,is_active")
+      .eq("id", replacedByExerciseId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (replacementError) {
+      return { ok: false as const, message: replacementError.message };
+    }
+
+    if (!replacementRow) {
+      return { ok: false as const, message: "Replacement exercise not found." };
+    }
+
+    replacementExercise = replacementRow as ReplacementLinkExercise;
+    replacementPredecessorIds = await resolveExercisePredecessorIds(userId, replacedByExerciseId);
+  }
+
+  const validation = validateArchivedExerciseReplacementLink({
+    archivedExercise: archivedExercise as ReplacementLinkExercise,
+    replacementExercise,
+    replacementPredecessorIds,
+  });
+  if (!validation.ok) {
+    return validation;
+  }
+
+  const { error } = await supabase
+    .from(TABLES.exercises)
+    .update({ replaced_by_exercise_id: replacedByExerciseId })
+    .eq("id", exerciseId)
+    .eq("user_id", userId);
+
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+
+  return { ok: true as const };
+}
+
 export async function resolveExercisePredecessorIds(
   userId: string,
   exerciseId: string
@@ -421,7 +526,7 @@ export async function restoreManagedExercise(userId: string, exerciseId: string,
 
   const { error } = await supabase
     .from(TABLES.exercises)
-    .update({ is_active: true, sort_order: sortOrderResult.sortOrder })
+    .update({ is_active: true, sort_order: sortOrderResult.sortOrder, replaced_by_exercise_id: null })
     .eq("id", exerciseId)
     .eq("user_id", userId);
 

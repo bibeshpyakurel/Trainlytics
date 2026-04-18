@@ -93,6 +93,10 @@ export type MuscleGroupStrengthDatasets = {
   selectedExercisesByMuscleGroup: Record<TrackedMuscleGroup, string[]>;
 };
 
+type MuscleGroupStrengthDatasetOptions = {
+  exerciseIsArchivedByName?: Record<string, boolean>;
+};
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "")
     .toLowerCase()
@@ -520,7 +524,8 @@ export function buildStrengthProgressDatasets(
 export function buildMuscleGroupStrengthDatasets(
   sessionScores: SessionStrengthScore[],
   aggregationMode: StrengthAggregationMode = "sum",
-  maxExercisesPerMuscleGroup = 2
+  maxExercisesPerMuscleGroup = 2,
+  options?: MuscleGroupStrengthDatasetOptions
 ): MuscleGroupStrengthDatasets {
   const seriesByMuscleGroup = {} as Record<TrackedMuscleGroup, StrengthTimeSeriesPoint[]>;
   const selectedExercisesByMuscleGroup = {} as Record<TrackedMuscleGroup, string[]>;
@@ -533,12 +538,35 @@ export function buildMuscleGroupStrengthDatasets(
     });
 
     const countByExercise = new Map<string, number>();
+    const latestDateByExercise = new Map<string, string>();
     for (const row of groupRows) {
       countByExercise.set(row.exerciseName, (countByExercise.get(row.exerciseName) ?? 0) + 1);
+      const latestDate = latestDateByExercise.get(row.exerciseName);
+      if (!latestDate || row.date > latestDate) {
+        latestDateByExercise.set(row.exerciseName, row.date);
+      }
     }
 
     const selectedExercises = Array.from(countByExercise.entries())
-      .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] - a[1]))
+      .sort((a, b) => {
+        const aIsArchived = options?.exerciseIsArchivedByName?.[a[0]] ?? false;
+        const bIsArchived = options?.exerciseIsArchivedByName?.[b[0]] ?? false;
+        if (aIsArchived !== bIsArchived) {
+          return aIsArchived ? 1 : -1;
+        }
+
+        const aLatestDate = latestDateByExercise.get(a[0]) ?? "";
+        const bLatestDate = latestDateByExercise.get(b[0]) ?? "";
+        if (aLatestDate !== bLatestDate) {
+          return bLatestDate.localeCompare(aLatestDate);
+        }
+
+        if (a[1] !== b[1]) {
+          return b[1] - a[1];
+        }
+
+        return a[0].localeCompare(b[0]);
+      })
       .slice(0, maxExercisesPerMuscleGroup)
       .map(([exerciseName]) => exerciseName);
 
