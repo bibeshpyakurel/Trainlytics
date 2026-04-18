@@ -22,7 +22,8 @@
         "db/migrations/metabolic_activity_logs.sql",
         "db/migrations/energy_metrics_foundation.sql",
         "db/migrations/energy_metrics_profile_enums.sql",
-        "db/migrations/daily_energy_backfill_forward.sql"
+        "db/migrations/daily_energy_backfill_forward.sql",
+        "db/migrations/add_exercise_replacement_chain.sql"
       ]
     }
   ],
