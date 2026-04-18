@@ -43,4 +43,5 @@ export type DashboardData = {
   exerciseStrengthSeries: Record<string, StrengthTimeSeriesPoint[]>;
   exerciseNames: string[];
   exerciseNamesByCategory: Record<ExerciseTrendCategory, string[]>;
+  exerciseIsArchivedByName: Record<string, boolean>;
 };

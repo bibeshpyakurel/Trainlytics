@@ -160,7 +160,7 @@ export function useLogSessionData({
 
       const { data, error } = await supabase
         .from(TABLES.exercises)
-        .select("id,name,split,muscle_group,metric_type,sort_order")
+        .select("id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id")
         .eq("user_id", userId)
         .eq("split", split)
         .eq("is_active", true)

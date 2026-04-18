@@ -75,6 +75,7 @@ describe("dashboard view model", () => {
         exerciseStrengthSeries: {},
         exerciseNames: [],
         exerciseNamesByCategory: { push: [], pull: [], legs: [], core: [] },
+        exerciseIsArchivedByName: {},
       },
     });
 

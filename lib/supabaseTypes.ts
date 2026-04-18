@@ -155,6 +155,7 @@ export type Database = {
           metric_type: Database["public"]["Enums"]["exercise_metric_type"];
           muscle_group: string;
           name: string;
+          replaced_by_exercise_id: string | null;
           sort_order: number;
           split: Database["public"]["Enums"]["split_type"];
           user_id: string;
@@ -166,6 +167,7 @@ export type Database = {
           metric_type?: Database["public"]["Enums"]["exercise_metric_type"];
           muscle_group: string;
           name: string;
+          replaced_by_exercise_id?: string | null;
           sort_order?: number;
           split: Database["public"]["Enums"]["split_type"];
           user_id: string;
@@ -177,11 +179,20 @@ export type Database = {
           metric_type?: Database["public"]["Enums"]["exercise_metric_type"];
           muscle_group?: string;
           name?: string;
+          replaced_by_exercise_id?: string | null;
           sort_order?: number;
           split?: Database["public"]["Enums"]["split_type"];
           user_id?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "exercises_replaced_by_exercise_id_fkey";
+            columns: ["replaced_by_exercise_id"];
+            isOneToOne: false;
+            referencedRelation: "exercises";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       profiles: {
         Row: {

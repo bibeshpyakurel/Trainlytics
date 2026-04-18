@@ -21,6 +21,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import ArchivedBadge from "@/shared/ui/ArchivedBadge";
+import TogglePill from "@/shared/ui/TogglePill";
 
 function formatChartLabel(dateIso: string) {
   const date = new Date(`${dateIso}T00:00:00`);
@@ -55,10 +57,12 @@ function StrengthLineChart({
   series,
   lineColor,
   emptyText,
+  isArchived = false,
 }: {
   series: StrengthTimeSeriesPoint[];
   lineColor: string;
   emptyText: string;
+  isArchived?: boolean;
 }) {
   const chartData = toChartData(series);
   const yMax = getChartYMax(series);
@@ -115,7 +119,14 @@ function StrengthLineChart({
             );
           }}
         />
-        <Line type="monotone" dataKey="score" stroke={lineColor} strokeWidth={3} dot={{ r: 3 }} />
+        <Line
+          type="monotone"
+          dataKey="score"
+          stroke={isArchived ? "#71717a" : lineColor}
+          strokeWidth={isArchived ? 2 : 3}
+          strokeDasharray={isArchived ? "5 5" : undefined}
+          dot={{ r: 3 }}
+        />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -167,6 +178,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
   const [chartWindow, setChartWindow] = useState<DashboardChartWindow>("90d");
+  const [showArchivedExercises, setShowArchivedExercises] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -282,10 +294,24 @@ export default function DashboardPage() {
                 className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md"
               >
                 <h3 className="text-base font-semibold text-white">{formatMuscleGroupTitle(group)}</h3>
-                <p className="mt-1 text-xs text-zinc-400">
-                  {selectedExercises.length > 0
-                    ? `Using top exercises: ${selectedExercises.join(" · ")}`
-                    : "No qualifying exercise data yet."}
+                <p className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-zinc-400">
+                  {selectedExercises.length > 0 ? (
+                    <>
+                      <span>Using top exercises:</span>
+                      {selectedExercises.map((name, i) => {
+                        const isArchived = data?.exerciseIsArchivedByName[name] ?? false;
+                        return (
+                          <span key={name} className="inline-flex items-center">
+                            {i > 0 && <span className="mr-1">·</span>}
+                            <span className={isArchived ? "text-zinc-500 line-through" : ""}>{name}</span>
+                            {isArchived && <ArchivedBadge />}
+                          </span>
+                        );
+                      })}
+                    </>
+                  ) : (
+                    "No qualifying exercise data yet."
+                  )}
                 </p>
                 <div className="mt-3 h-56 w-full">
                   <StrengthLineChart
@@ -308,42 +334,67 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <select
-              value={effectiveSelectedExercise}
-              onChange={(e) => setSelectedExercise(e.target.value)}
-              className="rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
-              disabled={loading || !data || data.exerciseNames.length === 0}
-            >
-              {data?.exerciseNames.length ? (
-                (Object.keys(EXERCISE_CATEGORY_LABELS) as Array<keyof typeof EXERCISE_CATEGORY_LABELS>).map(
-                  (category) => {
-                    const categoryExercises = data.exerciseNamesByCategory[category] ?? [];
-                    if (categoryExercises.length === 0) return null;
+            <div className="flex flex-col gap-2 sm:items-end">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-zinc-400">Show archived</span>
+                <TogglePill
+                  enabled={showArchivedExercises}
+                  onToggle={() => setShowArchivedExercises((v) => !v)}
+                  onLabel="On"
+                  offLabel="Off"
+                  disabled={loading || !data}
+                />
+              </div>
+              <select
+                value={effectiveSelectedExercise}
+                onChange={(e) => setSelectedExercise(e.target.value)}
+                className="rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
+                disabled={loading || !data || data.exerciseNames.length === 0}
+              >
+                {data?.exerciseNames.length ? (
+                  (Object.keys(EXERCISE_CATEGORY_LABELS) as Array<keyof typeof EXERCISE_CATEGORY_LABELS>).map(
+                    (category) => {
+                      const categoryExercises = (data.exerciseNamesByCategory[category] ?? []).filter(
+                        (name) => showArchivedExercises || !(data.exerciseIsArchivedByName[name] ?? false)
+                      );
+                      if (categoryExercises.length === 0) return null;
 
-                    return (
-                      <optgroup key={category} label={EXERCISE_CATEGORY_LABELS[category]}>
-                        {categoryExercises.map((exerciseName) => (
-                          <option key={exerciseName} value={exerciseName}>
-                            {exerciseName}
-                          </option>
-                        ))}
-                      </optgroup>
-                    );
-                  }
-                )
-              ) : (
-                <option value="">No exercises</option>
-              )}
-            </select>
+                      return (
+                        <optgroup key={category} label={EXERCISE_CATEGORY_LABELS[category]}>
+                          {categoryExercises.map((exerciseName) => {
+                            const isArchived = data.exerciseIsArchivedByName[exerciseName] ?? false;
+                            return (
+                              <option key={exerciseName} value={exerciseName}>
+                                {exerciseName}{isArchived ? " (Archived)" : ""}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      );
+                    }
+                  )
+                ) : (
+                  <option value="">No exercises</option>
+                )}
+              </select>
+            </div>
           </div>
 
           <div className="mt-4 h-72 w-full">
             <StrengthLineChart
               series={selectedExerciseSeries}
               lineColor="#a78bfa"
+              isArchived={data?.exerciseIsArchivedByName[effectiveSelectedExercise] ?? false}
               emptyText="No session strength data for this exercise yet."
             />
           </div>
+
+          {effectiveSelectedExercise && (data?.exerciseIsArchivedByName[effectiveSelectedExercise] ?? false) && (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500 italic">
+              <ArchivedBadge />
+              This exercise is archived, but its historical data is still preserved.
+            </p>
+          )}
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr] lg:items-stretch">
