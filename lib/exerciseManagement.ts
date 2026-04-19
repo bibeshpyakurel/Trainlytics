@@ -4,8 +4,6 @@ import type { Database } from "@/lib/supabaseTypes";
 import type { MetricType, Split } from "@/features/log/types";
 
 type ExerciseRow = Database["public"]["Tables"]["exercises"]["Row"];
-type WorkoutSessionRow = Database["public"]["Tables"]["workout_sessions"]["Row"];
-type WorkoutSetRow = Database["public"]["Tables"]["workout_sets"]["Row"];
 
 export type ManagedExercise = ExerciseRow & {
   loggedSetCount: number;
@@ -19,41 +17,11 @@ export type ExerciseDraft = {
   metricType: MetricType;
 };
 
-export type WorkoutExportFilter =
-  | { mode: "single-date"; date: string }
-  | { mode: "date-range"; startDate: string; endDate: string }
-  | { mode: "all" };
-
-export type WorkoutExportRow = {
-  sessionDate: string;
-  split: Split;
-  exerciseName: string;
-  muscleGroup: string;
-  metricType: MetricType;
-  setNumber: number;
-  reps: number | null;
-  weightInput: number | null;
-  unitInput: Database["public"]["Enums"]["unit_type"] | null;
-  weightKg: number | null;
-  durationSeconds: number | null;
-};
-
 type ReplacementLinkExercise = Pick<ExerciseRow, "id" | "split" | "metric_type" | "is_active">;
 
 const SPLIT_ORDER: Split[] = ["push", "pull", "legs", "core"];
 const NAME_MAX_LENGTH = 80;
 const MUSCLE_GROUP_MAX_LENGTH = 40;
-
-function isValidIsoDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function escapeCsv(value: string | number | null) {
-  if (value == null) return "";
-  const text = String(value);
-  if (!/[",\n]/.test(text)) return text;
-  return `"${text.replaceAll('"', '""')}"`;
-}
 
 async function loadUserExerciseNameIndex(userId: string) {
   const { data, error } = await supabase
@@ -141,60 +109,6 @@ export function validateExerciseDraft(draft: ExerciseDraft) {
       metricType: draft.metricType,
     },
   };
-}
-
-export function buildWorkoutExportCsv(rows: WorkoutExportRow[]) {
-  const header = [
-    "session_date",
-    "split",
-    "exercise_name",
-    "muscle_group",
-    "metric_type",
-    "set_number",
-    "reps",
-    "weight_input",
-    "unit_input",
-    "weight_kg",
-    "duration_seconds",
-  ];
-
-  const body = rows.map((row) => [
-    escapeCsv(row.sessionDate),
-    escapeCsv(row.split),
-    escapeCsv(row.exerciseName),
-    escapeCsv(row.muscleGroup),
-    escapeCsv(row.metricType),
-    escapeCsv(row.setNumber),
-    escapeCsv(row.reps),
-    escapeCsv(row.weightInput),
-    escapeCsv(row.unitInput),
-    escapeCsv(row.weightKg),
-    escapeCsv(row.durationSeconds),
-  ].join(","));
-
-  return [header.join(","), ...body].join("\n");
-}
-
-export function getWorkoutExportFileName(filter: WorkoutExportFilter) {
-  if (filter.mode === "single-date") {
-    return `trainlytics-workouts-${filter.date}.csv`;
-  }
-
-  if (filter.mode === "date-range") {
-    return `trainlytics-workouts-${filter.startDate}-to-${filter.endDate}.csv`;
-  }
-
-  return "trainlytics-workouts-all-history.csv";
-}
-
-export function downloadCsvFile(filename: string, csv: string) {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const blobUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = blobUrl;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(blobUrl);
 }
 
 export function validateArchivedExerciseReplacementLink(input: {
@@ -609,114 +523,4 @@ export async function deleteManagedExercise(userId: string, exerciseId: string) 
     deletedSetCount: (setRows ?? []).length,
     deletedEmptySessions,
   };
-}
-
-export async function exportWorkoutHistory(userId: string, filter: WorkoutExportFilter) {
-  if (filter.mode === "single-date" && !isValidIsoDate(filter.date)) {
-    return { ok: false as const, message: "Choose a valid export date." };
-  }
-
-  if (filter.mode === "date-range") {
-    if (!isValidIsoDate(filter.startDate) || !isValidIsoDate(filter.endDate)) {
-      return { ok: false as const, message: "Choose a valid start and end date." };
-    }
-    if (filter.startDate > filter.endDate) {
-      return { ok: false as const, message: "Start date must be before end date." };
-    }
-  }
-
-  let sessionQuery = supabase
-    .from(TABLES.workoutSessions)
-    .select("id,session_date,split,created_at")
-    .eq("user_id", userId)
-    .order("session_date", { ascending: true });
-
-  if (filter.mode === "single-date") {
-    sessionQuery = sessionQuery.eq("session_date", filter.date);
-  }
-
-  if (filter.mode === "date-range") {
-    sessionQuery = sessionQuery.gte("session_date", filter.startDate).lte("session_date", filter.endDate);
-  }
-
-  const { data: sessions, error: sessionError } = await sessionQuery;
-  if (sessionError) {
-    return { ok: false as const, message: sessionError.message };
-  }
-
-  const sessionRows = (sessions ?? []) as Array<Pick<WorkoutSessionRow, "id" | "session_date" | "split">>;
-  if (sessionRows.length === 0) {
-    return { ok: true as const, rows: [] as WorkoutExportRow[] };
-  }
-
-  const sessionIds = sessionRows.map((session) => session.id);
-  const { data: sets, error: setsError } = await supabase
-    .from(TABLES.workoutSets)
-    .select("session_id,exercise_id,set_number,reps,weight_input,unit_input,weight_kg,duration_seconds")
-    .eq("user_id", userId)
-    .in("session_id", sessionIds)
-    .order("session_id", { ascending: true })
-    .order("set_number", { ascending: true });
-
-  if (setsError) {
-    return { ok: false as const, message: setsError.message };
-  }
-
-  const setRows = (sets ?? []) as Array<
-    Pick<
-      WorkoutSetRow,
-      "session_id" | "exercise_id" | "set_number" | "reps" | "weight_input" | "unit_input" | "weight_kg" | "duration_seconds"
-    >
-  >;
-
-  const exerciseIds = Array.from(new Set(setRows.map((row) => row.exercise_id)));
-  const { data: exercises, error: exerciseError } = await supabase
-    .from(TABLES.exercises)
-    .select("id,name,muscle_group,metric_type")
-    .in("id", exerciseIds);
-
-  if (exerciseError) {
-    return { ok: false as const, message: exerciseError.message };
-  }
-
-  const sessionById = new Map(sessionRows.map((row) => [row.id, row]));
-  const exerciseById = new Map(
-    ((exercises ?? []) as Array<Pick<ExerciseRow, "id" | "name" | "muscle_group" | "metric_type">>).map((row) => [
-      row.id,
-      row,
-    ])
-  );
-
-  const rows: WorkoutExportRow[] = setRows
-    .map((row) => {
-      const session = sessionById.get(row.session_id);
-      const exercise = exerciseById.get(row.exercise_id);
-      if (!session || !exercise) return null;
-
-      return {
-        sessionDate: session.session_date,
-        split: session.split,
-        exerciseName: exercise.name,
-        muscleGroup: exercise.muscle_group,
-        metricType: exercise.metric_type,
-        setNumber: row.set_number,
-        reps: row.reps,
-        weightInput: row.weight_input,
-        unitInput: row.unit_input,
-        weightKg: row.weight_kg,
-        durationSeconds: row.duration_seconds,
-      };
-    })
-    .filter((row): row is WorkoutExportRow => row != null)
-    .sort((a, b) => {
-      const dateDiff = a.sessionDate.localeCompare(b.sessionDate);
-      if (dateDiff !== 0) return dateDiff;
-      const splitDiff = SPLIT_ORDER.indexOf(a.split) - SPLIT_ORDER.indexOf(b.split);
-      if (splitDiff !== 0) return splitDiff;
-      const exerciseDiff = a.exerciseName.localeCompare(b.exerciseName);
-      if (exerciseDiff !== 0) return exerciseDiff;
-      return a.setNumber - b.setNumber;
-    });
-
-  return { ok: true as const, rows };
 }
