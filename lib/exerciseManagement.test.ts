@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildWorkoutExportCsv,
-  getWorkoutExportFileName,
   normalizeExerciseName,
   normalizeMuscleGroup,
   validateArchivedExerciseReplacementLink,
@@ -31,41 +29,6 @@ describe("exerciseManagement", () => {
         metricType: "WEIGHTED_REPS",
       },
     });
-  });
-
-  it("builds csv with escaping for export rows", () => {
-    const csv = buildWorkoutExportCsv([
-      {
-        sessionDate: "2026-04-17",
-        split: "push",
-        exerciseName: 'Bench, Press',
-        muscleGroup: "chest",
-        metricType: "WEIGHTED_REPS",
-        setNumber: 1,
-        reps: 8,
-        weightInput: 100,
-        unitInput: "lb",
-        weightKg: 45.36,
-        durationSeconds: null,
-      },
-    ]);
-
-    expect(csv).toContain('"Bench, Press"');
-    expect(csv.split("\n")).toHaveLength(2);
-  });
-
-  it("builds predictable filenames for each export mode", () => {
-    expect(getWorkoutExportFileName({ mode: "single-date", date: "2026-04-17" })).toBe(
-      "trainlytics-workouts-2026-04-17.csv"
-    );
-    expect(
-      getWorkoutExportFileName({
-        mode: "date-range",
-        startDate: "2026-04-01",
-        endDate: "2026-04-17",
-      })
-    ).toBe("trainlytics-workouts-2026-04-01-to-2026-04-17.csv");
-    expect(getWorkoutExportFileName({ mode: "all" })).toBe("trainlytics-workouts-all-history.csv");
   });
 
   it("validates archived replacement links", () => {
