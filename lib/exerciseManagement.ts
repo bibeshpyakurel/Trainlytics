@@ -524,3 +524,166 @@ export async function deleteManagedExercise(userId: string, exerciseId: string) 
     deletedEmptySessions,
   };
 }
+
+export async function renameManagedExercise(userId: string, exerciseId: string, newName: string) {
+  const normalized = normalizeExerciseName(newName);
+  if (!normalized) {
+    return { ok: false as const, message: "Exercise name is required." };
+  }
+  if (normalized.length > NAME_MAX_LENGTH) {
+    return { ok: false as const, message: `Exercise name must be ${NAME_MAX_LENGTH} characters or fewer.` };
+  }
+
+  const nameIndexResult = await loadUserExerciseNameIndex(userId);
+  if (!nameIndexResult.ok) return nameIndexResult;
+
+  const conflictId = nameIndexResult.nameIndex.get(normalized.toLowerCase());
+  if (conflictId && conflictId !== exerciseId) {
+    return { ok: false as const, message: "You already have an exercise with that name." };
+  }
+
+  const { error } = await supabase
+    .from(TABLES.exercises)
+    .update({ name: normalized })
+    .eq("id", exerciseId)
+    .eq("user_id", userId);
+
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+
+  return { ok: true as const, normalizedName: normalized };
+}
+
+export async function moveExercise(
+  userId: string,
+  exerciseId: string,
+  targetSplit: Split,
+  targetMuscleGroup: string
+) {
+  const normalizedGroup = normalizeMuscleGroup(targetMuscleGroup);
+  if (!normalizedGroup) {
+    return { ok: false as const, message: "Muscle group is required." };
+  }
+  if (normalizedGroup.length > MUSCLE_GROUP_MAX_LENGTH) {
+    return { ok: false as const, message: `Muscle group must be ${MUSCLE_GROUP_MAX_LENGTH} characters or fewer.` };
+  }
+
+  const sortOrderResult = await getNextSortOrder(userId, targetSplit);
+  if (!sortOrderResult.ok) return sortOrderResult;
+
+  const { error } = await supabase
+    .from(TABLES.exercises)
+    .update({ split: targetSplit, muscle_group: normalizedGroup, sort_order: sortOrderResult.sortOrder })
+    .eq("id", exerciseId)
+    .eq("user_id", userId);
+
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+
+  return { ok: true as const };
+}
+
+export async function renameMuscleGroup(
+  userId: string,
+  split: Split,
+  oldMuscleGroup: string,
+  newMuscleGroup: string
+) {
+  const normalized = normalizeMuscleGroup(newMuscleGroup);
+  if (!normalized) {
+    return { ok: false as const, message: "Muscle group name is required." };
+  }
+  if (normalized.length > MUSCLE_GROUP_MAX_LENGTH) {
+    return { ok: false as const, message: `Muscle group must be ${MUSCLE_GROUP_MAX_LENGTH} characters or fewer.` };
+  }
+
+  const { error } = await supabase
+    .from(TABLES.exercises)
+    .update({ muscle_group: normalized })
+    .eq("user_id", userId)
+    .eq("split", split)
+    .eq("muscle_group", oldMuscleGroup);
+
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+
+  return { ok: true as const, normalizedName: normalized };
+}
+
+export async function moveMuscleGroupToSplit(
+  userId: string,
+  currentSplit: Split,
+  muscleGroup: string,
+  targetSplit: Split
+) {
+  const { data, error: fetchError } = await supabase
+    .from(TABLES.exercises)
+    .select("id")
+    .eq("user_id", userId)
+    .eq("split", currentSplit)
+    .eq("muscle_group", muscleGroup);
+
+  if (fetchError) {
+    return { ok: false as const, message: fetchError.message };
+  }
+
+  const exerciseIds = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (exerciseIds.length === 0) {
+    return { ok: true as const, movedCount: 0 };
+  }
+
+  const sortOrderResult = await getNextSortOrder(userId, targetSplit);
+  if (!sortOrderResult.ok) return sortOrderResult;
+
+  let baseOrder = sortOrderResult.sortOrder;
+  for (const id of exerciseIds) {
+    const { error: updateError } = await supabase
+      .from(TABLES.exercises)
+      .update({ split: targetSplit, sort_order: baseOrder })
+      .eq("id", id)
+      .eq("user_id", userId);
+
+    if (updateError) {
+      return { ok: false as const, message: updateError.message };
+    }
+    baseOrder++;
+  }
+
+  return { ok: true as const, movedCount: exerciseIds.length };
+}
+
+export async function reorderExercisesInGroup(userId: string, orderedIds: string[]) {
+  for (let i = 0; i < orderedIds.length; i++) {
+    const { error } = await supabase
+      .from(TABLES.exercises)
+      .update({ sort_order: i + 1 })
+      .eq("id", orderedIds[i])
+      .eq("user_id", userId);
+
+    if (error) {
+      return { ok: false as const, message: error.message };
+    }
+  }
+  return { ok: true as const };
+}
+
+export async function updateExerciseMemo(
+  userId: string,
+  exerciseId: string,
+  memo: string | null
+) {
+  const { error } = await supabase
+    .from(TABLES.exercises)
+    .update({ memo: memo ?? null })
+    .eq("id", exerciseId)
+    .eq("user_id", userId);
+
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+
+  return { ok: true as const };
+}

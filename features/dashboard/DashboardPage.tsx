@@ -22,6 +22,7 @@ import {
   YAxis,
 } from "recharts";
 import ArchivedBadge from "@/shared/ui/ArchivedBadge";
+import GradientButton from "@/shared/ui/GradientButton";
 import TogglePill from "@/shared/ui/TogglePill";
 
 function formatChartLabel(dateIso: string) {
@@ -39,9 +40,19 @@ function toChartData(series: StrengthTimeSeriesPoint[]) {
   }));
 }
 
-function getChartYMax(series: StrengthTimeSeriesPoint[]) {
-  const max = series.length > 0 ? Math.max(...series.map((point) => point.score)) : 0;
-  return Math.max(100, Math.ceil((max + 100) / 100) * 100);
+function getChartYDomain(series: StrengthTimeSeriesPoint[]): [number, number] {
+  if (series.length === 0) return [0, 100];
+
+  const scores = series.map((p) => p.score);
+  const dataMin = Math.min(...scores);
+  const dataMax = Math.max(...scores);
+  const dataRange = dataMax - dataMin;
+
+  // Padding: 15% of the data range, at least 5% of the max value, never less than 3.
+  // This zooms in meaningfully while avoiding exaggerating small changes.
+  const pad = Math.max(dataRange * 0.15, dataMax * 0.05, 3);
+
+  return [Math.max(0, Math.floor(dataMin - pad)), Math.ceil(dataMax + pad)];
 }
 
 function formatSummaryLineWithLb(line: string) {
@@ -65,7 +76,7 @@ function StrengthLineChart({
   isArchived?: boolean;
 }) {
   const chartData = toChartData(series);
-  const yMax = getChartYMax(series);
+  const [yMin, yMax] = getChartYDomain(series);
 
   if (chartData.length === 0) {
     return (
@@ -90,7 +101,7 @@ function StrengthLineChart({
           tickLine={false}
           axisLine={{ stroke: "#52525b" }}
           width={64}
-          domain={[0, yMax]}
+          domain={[yMin, yMax]}
         />
         <Tooltip
           content={({ active, payload }) => {
@@ -171,6 +182,42 @@ const WINDOW_OPTIONS: Array<{ id: DashboardChartWindow; label: string }> = [
   { id: "all", label: "All" },
 ];
 
+const EXERCISE_CHART_COLORS = [
+  "#f97316", "#38bdf8", "#34d399", "#a78bfa",
+  "#f472b6", "#fbbf24", "#4ade80", "#fb7185",
+  "#60a5fa", "#c084fc", "#67e8f9", "#86efac",
+];
+
+const PINNED_EXERCISES_KEY = "dashboard_pinned_exercises";
+
+function loadPinnedExercisesFromStorage(): string[] | null {
+  try {
+    const raw = localStorage.getItem(PINNED_EXERCISES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return (parsed as unknown[]).filter((v): v is string => typeof v === "string");
+  } catch {
+    return null;
+  }
+}
+
+function savePinnedExercisesToStorage(names: string[]) {
+  try { localStorage.setItem(PINNED_EXERCISES_KEY, JSON.stringify(names)); } catch {}
+}
+
+function getDefaultPinnedExercises(
+  exerciseStrengthSeries: Record<string, StrengthTimeSeriesPoint[]>,
+  exerciseIsArchivedByName: Record<string, boolean>,
+  count: number
+): string[] {
+  return Object.entries(exerciseStrengthSeries)
+    .filter(([name]) => !(exerciseIsArchivedByName[name] ?? false))
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, count)
+    .map(([name]) => name);
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -179,6 +226,10 @@ export default function DashboardPage() {
   const [selectedExercise, setSelectedExercise] = useState<string>("");
   const [chartWindow, setChartWindow] = useState<DashboardChartWindow>("90d");
   const [showArchivedExercises, setShowArchivedExercises] = useState(false);
+  const [pinnedExercises, setPinnedExercises] = useState<string[]>([]);
+  const [showCustomizer, setShowCustomizer] = useState(false);
+  const [customizerSnapshot, setCustomizerSnapshot] = useState<string[]>([]);
+  const [pinnedInitialized, setPinnedInitialized] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -211,6 +262,20 @@ export default function DashboardPage() {
       isMounted = false;
     };
   }, [router, chartWindow]);
+
+  useEffect(() => {
+    if (!data || pinnedInitialized) return;
+    const stored = loadPinnedExercisesFromStorage();
+    const valid = stored?.filter((name) => !!data.exerciseStrengthSeries[name]) ?? [];
+    if (valid.length > 0) {
+      setPinnedExercises(valid);
+    } else {
+      const defaults = getDefaultPinnedExercises(data.exerciseStrengthSeries, data.exerciseIsArchivedByName, 6);
+      setPinnedExercises(defaults);
+      savePinnedExercisesToStorage(defaults);
+    }
+    setPinnedInitialized(true);
+  }, [data, pinnedInitialized]);
 
   const effectiveSelectedExercise =
     data && data.exerciseNames.length > 0
@@ -284,116 +349,81 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {(data?.trackedMuscleGroups ?? []).map((group) => {
-            const selectedExercises = data?.selectedExercisesByMuscleGroup[group] ?? [];
-
-            return (
-              <div
-                key={group}
-                className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md"
-              >
-                <h3 className="text-base font-semibold text-white">{formatMuscleGroupTitle(group)}</h3>
-                <p className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-zinc-400">
-                  {selectedExercises.length > 0 ? (
-                    <>
-                      <span>Using current top exercises:</span>
-                      {selectedExercises.map((name, i) => {
-                        const isArchived = data?.exerciseIsArchivedByName[name] ?? false;
-                        return (
-                          <span key={name} className="inline-flex items-center">
-                            {i > 0 && <span className="mr-1">·</span>}
-                            <span className={isArchived ? "text-zinc-500 line-through" : ""}>{name}</span>
-                            {isArchived && <ArchivedBadge />}
-                          </span>
-                        );
-                      })}
-                    </>
-                  ) : (
-                    "No qualifying exercise data yet."
-                  )}
-                </p>
-                <div className="mt-3 h-56 w-full">
-                  <StrengthLineChart
-                    series={data?.muscleGroupStrengthSeries[group] ?? []}
-                    lineColor={MUSCLE_GROUP_LINE_COLORS[group]}
-                    emptyText={`No ${formatMuscleGroupLabel(group).toLowerCase()} data yet.`}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
         <div className="mt-6 rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-white">Exercise Strength Trend</h2>
+              <h2 className="text-lg font-semibold text-white">Exercise Strength Trends</h2>
               <p className="mt-1 text-sm text-zinc-400">
-                Select an exercise to view session strength over time ({WINDOW_OPTIONS.find((option) => option.id === chartWindow)?.label} window).
+                {loading
+                  ? "Loading..."
+                  : `${pinnedExercises.length} exercise${pinnedExercises.length !== 1 ? "s" : ""} · ${WINDOW_OPTIONS.find((o) => o.id === chartWindow)?.label} window`}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setCustomizerSnapshot(pinnedExercises);
+                setShowCustomizer(true);
+              }}
+              disabled={loading || !data}
+              className="rounded-md border border-zinc-600 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+            >
+              Customize
+            </button>
+          </div>
 
-            <div className="flex flex-col gap-2 sm:items-end">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-zinc-400">Show archived</span>
-                <TogglePill
-                  enabled={showArchivedExercises}
-                  onToggle={() => setShowArchivedExercises((v) => !v)}
-                  onLabel="On"
-                  offLabel="Off"
-                  disabled={loading || !data}
-                />
-              </div>
-              <select
-                value={effectiveSelectedExercise}
-                onChange={(e) => setSelectedExercise(e.target.value)}
-                className="rounded-md border border-zinc-700 bg-zinc-950/80 p-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
-                disabled={loading || !data || data.exerciseNames.length === 0}
+          {loading ? (
+            <p className="mt-6 text-sm text-zinc-400">Loading charts...</p>
+          ) : pinnedExercises.length === 0 ? (
+            <div className="mt-6 rounded-xl border border-dashed border-zinc-700 py-10 text-center text-sm text-zinc-400">
+              No exercises selected.{" "}
+              <button
+                type="button"
+                onClick={() => { setCustomizerSnapshot([]); setShowCustomizer(true); }}
+                className="text-amber-300 underline underline-offset-2"
               >
-                {data?.exerciseNames.length ? (
-                  (Object.keys(EXERCISE_CATEGORY_LABELS) as Array<keyof typeof EXERCISE_CATEGORY_LABELS>).map(
-                    (category) => {
-                      const categoryExercises = (data.exerciseNamesByCategory[category] ?? []).filter(
-                        (name) => showArchivedExercises || !(data.exerciseIsArchivedByName[name] ?? false)
-                      );
-                      if (categoryExercises.length === 0) return null;
-
-                      return (
-                        <optgroup key={category} label={EXERCISE_CATEGORY_LABELS[category]}>
-                          {categoryExercises.map((exerciseName) => {
-                            const isArchived = data.exerciseIsArchivedByName[exerciseName] ?? false;
-                            return (
-                              <option key={exerciseName} value={exerciseName}>
-                                {exerciseName}{isArchived ? " (Archived)" : ""}
-                              </option>
-                            );
-                          })}
-                        </optgroup>
-                      );
-                    }
-                  )
-                ) : (
-                  <option value="">No exercises</option>
-                )}
-              </select>
+                Customize
+              </button>{" "}
+              to add some.
             </div>
-          </div>
-
-          <div className="mt-4 h-72 w-full">
-            <StrengthLineChart
-              series={selectedExerciseSeries}
-              lineColor="#a78bfa"
-              isArchived={data?.exerciseIsArchivedByName[effectiveSelectedExercise] ?? false}
-              emptyText="No session strength data for this exercise yet."
-            />
-          </div>
-
-          {effectiveSelectedExercise && (data?.exerciseIsArchivedByName[effectiveSelectedExercise] ?? false) && (
-            <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500 italic">
-              <ArchivedBadge />
-              This exercise is archived, but its historical data is still preserved.
-            </p>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {pinnedExercises.map((name, idx) => {
+                const series = data?.exerciseStrengthSeries[name] ?? [];
+                const isArchived = data?.exerciseIsArchivedByName[name] ?? false;
+                const color = EXERCISE_CHART_COLORS[idx % EXERCISE_CHART_COLORS.length] ?? "#a78bfa";
+                return (
+                  <div key={name} className="rounded-2xl border border-zinc-700/70 bg-zinc-950/50 p-4">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <p className="truncate text-sm font-semibold text-zinc-100">{name}</p>
+                        {isArchived && <ArchivedBadge />}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${name}`}
+                        onClick={() => {
+                          const next = pinnedExercises.filter((n) => n !== name);
+                          setPinnedExercises(next);
+                          savePinnedExercisesToStorage(next);
+                        }}
+                        className="shrink-0 text-zinc-600 transition hover:text-zinc-300"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="mt-3 h-44">
+                      <StrengthLineChart
+                        series={series}
+                        lineColor={color}
+                        isArchived={isArchived}
+                        emptyText="No data yet"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
 
@@ -404,24 +434,32 @@ export default function DashboardPage() {
             <div className="mt-4 space-y-4 text-sm text-zinc-200">
               <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3">
                 <p className="font-medium text-zinc-100">Per-Set Score</p>
-                <p className="mt-1">Weight × Reps × Rep Multiplier</p>
+                <p className="mt-1">Weight × Rep Multiplier</p>
+                <p className="mt-1 text-xs text-zinc-400">Weight is the primary driver. The multiplier adds a small bonus for each rep within the 5–9 target range.</p>
               </div>
 
               <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3">
                 <p className="font-medium text-zinc-100">Rep Multiplier</p>
+                <p className="mt-1 text-xs text-zinc-400">Consistent heavier weight scores higher than more reps at a lighter weight.</p>
                 <div className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs text-zinc-300">
-                  <p>1–3 reps</p><p className="text-right">0.80</p>
-                  <p>4–6 reps</p><p className="text-right">1.00</p>
-                  <p>7–9 reps</p><p className="text-right">1.15</p>
-                  <p>10–12 reps</p><p className="text-right">1.05</p>
-                  <p>13+ reps</p><p className="text-right">1.00</p>
+                  <p>1–3 reps</p><p className="text-right">0.85</p>
+                  <p>4 reps</p><p className="text-right">0.93</p>
+                  <p className="font-medium text-zinc-100">5 reps (target start)</p><p className="text-right font-medium text-zinc-100">1.00</p>
+                  <p className="font-medium text-zinc-100">9 reps (target end)</p><p className="text-right font-medium text-zinc-100">1.04</p>
+                  <p>10–12 reps</p><p className="text-right">0.95</p>
+                  <p>13+ reps</p><p className="text-right">0.85</p>
                 </div>
               </div>
 
               <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3">
                 <p className="font-medium text-zinc-100">Session Score</p>
-                <p className="mt-1">0.4 × Set 1 score + 0.6 × Set 2 score</p>
+                <p className="mt-1">(Set 1 score + Set 2 score) ÷ 2</p>
                 <p className="mt-1 text-xs text-zinc-300">If only one set exists, use that set score directly.</p>
+              </div>
+
+              <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/40 p-3">
+                <p className="font-medium text-zinc-100">Progression Model</p>
+                <p className="mt-1 text-xs text-zinc-300">Build reps from 5 → 9 at the same weight. When you reach 9, increase weight — reps naturally drop back toward 5. Both rep increases and weight increases raise your score.</p>
               </div>
             </div>
           </div>
@@ -457,6 +495,104 @@ export default function DashboardPage() {
         </div>
 
       </div>
+
+      {showCustomizer && data && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/70 backdrop-blur-sm sm:items-center sm:p-4">
+          <div
+            className="flex w-full max-w-lg flex-col rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl"
+            style={{ maxHeight: "85vh" }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Customize Charts</p>
+            <h3 className="mt-2 text-xl font-semibold text-white">Choose Exercises</h3>
+            <p className="mt-1 text-sm text-zinc-400">
+              {pinnedExercises.length} selected — check an exercise to pin it to your dashboard.
+            </p>
+
+            <div className="mt-4 flex items-center gap-2">
+              <span className="text-xs text-zinc-400">Show archived</span>
+              <TogglePill
+                enabled={showArchivedExercises}
+                onToggle={() => setShowArchivedExercises((v) => !v)}
+                onLabel="On"
+                offLabel="Off"
+              />
+            </div>
+
+            <div className="mt-3 flex-1 overflow-y-auto">
+              {(Object.keys(EXERCISE_CATEGORY_LABELS) as Array<keyof typeof EXERCISE_CATEGORY_LABELS>).map((category) => {
+                const exercises = (data.exerciseNamesByCategory[category] ?? []).filter(
+                  (name) => showArchivedExercises || !(data.exerciseIsArchivedByName[name] ?? false)
+                );
+                if (exercises.length === 0) return null;
+                return (
+                  <div key={category}>
+                    <p className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                      {EXERCISE_CATEGORY_LABELS[category]}
+                    </p>
+                    {exercises.map((name) => {
+                      const isPinned = pinnedExercises.includes(name);
+                      const isArchived = data.exerciseIsArchivedByName[name] ?? false;
+                      return (
+                        <label
+                          key={name}
+                          className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2.5 transition hover:bg-zinc-800"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isPinned}
+                            onChange={() =>
+                              setPinnedExercises((prev) =>
+                                isPinned ? prev.filter((n) => n !== name) : [...prev, name]
+                              )
+                            }
+                            className="h-4 w-4 rounded border-zinc-600 accent-amber-400"
+                          />
+                          <span className={`flex-1 text-sm ${isArchived ? "text-zinc-500 line-through" : "text-zinc-200"}`}>
+                            {name}
+                          </span>
+                          {isArchived && <ArchivedBadge />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-2 border-t border-zinc-700/60 pt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  const defaults = getDefaultPinnedExercises(data.exerciseStrengthSeries, data.exerciseIsArchivedByName, 6);
+                  setPinnedExercises(defaults);
+                }}
+                className="text-xs text-zinc-400 transition hover:text-zinc-200"
+              >
+                Reset to top 6
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinnedExercises(customizerSnapshot);
+                    setShowCustomizer(false);
+                  }}
+                  className="rounded-md border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+                >
+                  Cancel
+                </button>
+                <GradientButton
+                  label="Save"
+                  onClick={() => {
+                    savePinnedExercisesToStorage(pinnedExercises);
+                    setShowCustomizer(false);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

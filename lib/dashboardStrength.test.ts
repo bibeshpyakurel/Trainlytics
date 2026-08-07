@@ -17,23 +17,25 @@ import {
 
 describe("dashboardStrength", () => {
   it("computes rep multiplier by range", () => {
-    expect(computeRepMultiplier(2)).toBe(0.8);
+    expect(computeRepMultiplier(2)).toBe(0.85);
     expect(computeRepMultiplier(5)).toBe(1);
-    expect(computeRepMultiplier(8)).toBe(1.15);
-    expect(computeRepMultiplier(11)).toBe(1.05);
-    expect(computeRepMultiplier(15)).toBe(1);
+    expect(computeRepMultiplier(8)).toBe(1.03);
+    expect(computeRepMultiplier(11)).toBe(0.95);
+    expect(computeRepMultiplier(15)).toBe(0.85);
   });
 
   it("computes per-set strength score", () => {
-    expect(computeSetStrengthScore(100, 8)).toBeCloseTo(920, 6);
+    expect(computeSetStrengthScore(100, 8)).toBeCloseTo(103, 6);
   });
 
   it("computes per-set strength from weight_lb and reps", () => {
-    expect(computeSetStrength(100, 8)).toBeCloseTo(920, 6);
+    expect(computeSetStrength(100, 8)).toBeCloseTo(103, 6);
   });
 
   it("computes session strength with 40/60 weighting and missing-set fallback", () => {
-    const expectedWeighted = (100 * 8 * 1.15) * 0.4 + (110 * 7 * 1.15) * 0.6;
+    const set1Score = 100 * 1.03;
+    const set2Score = 110 * 1.02;
+    const expectedWeighted = set1Score * 0.5 + set2Score * 0.5;
 
     expect(
       computeSessionStrength({
@@ -46,13 +48,13 @@ describe("dashboardStrength", () => {
       computeSessionStrength({
         set1: { weight_lb: 95, reps: 6 },
       })
-    ).toBeCloseTo(570, 6);
+    ).toBeCloseTo(95 * 1.01, 6);
 
     expect(
       computeSessionStrength({
         set2: { weight_lb: 120, reps: 5 },
       })
-    ).toBeCloseTo(600, 6);
+    ).toBeCloseTo(120 * 1.0, 6);
   });
 
   it("computes progress delta safely with zero baseline", () => {
@@ -92,9 +94,9 @@ describe("dashboardStrength", () => {
     ];
 
     const [session] = computeSessionStrengthByExerciseDate(rows);
-    const set1 = 100 * 8 * 1.15;
-    const set2 = 110 * 7 * 1.15;
-    expect(session.sessionStrength).toBeCloseTo(set1 * 0.4 + set2 * 0.6, 6);
+    const set1 = 100 * 1.03;
+    const set2 = 110 * 1.02;
+    expect(session.sessionStrength).toBeCloseTo(set1 * 0.5 + set2 * 0.5, 6);
   });
 
   it("maps muscle groups to push/pull/legs", () => {

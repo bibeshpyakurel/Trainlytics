@@ -153,3 +153,44 @@ body {
 :root:not(.dark) .recharts-default-tooltip .recharts-tooltip-item-value {
   color: #18181b !important;
 }
+
+/* ── Mobile-first touch & safe-area optimizations ── */
+
+/* Eliminate 300ms tap delay and suppress long-press context on interactive elements */
+a,
+button,
+[role="button"],
+label {
+  touch-action: manipulation;
+}
+
+/* Remove grey tap flash on Android; prevent blue highlight on iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent iOS Safari auto-zoom when focusing inputs smaller than 16px */
+@media screen and (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Pad main content clear of the mobile bottom tab bar (56px) + device safe area */
+@media screen and (max-width: 639px) {
+  main {
+    padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Apply safe-area bg to mobile bottom tab bar */
+:root:not(.dark) nav[class*="bg-zinc-950/90"][class*="bottom-0"] {
+  background-color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(63, 63, 70, 0.2);
+}
+:root:not(.dark) header[class*="bg-zinc-950/90"] {
+  background-color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(63, 63, 70, 0.2);
+}
