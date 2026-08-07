@@ -256,26 +256,25 @@ export default function DashboardPage() {
 
       setData(result.data);
       setLoading(false);
+
+      if (!pinnedInitialized) {
+        const stored = loadPinnedExercisesFromStorage();
+        const valid = stored?.filter((name) => !!result.data.exerciseStrengthSeries[name]) ?? [];
+        if (valid.length > 0) {
+          setPinnedExercises(valid);
+        } else {
+          const defaults = getDefaultPinnedExercises(result.data.exerciseStrengthSeries, result.data.exerciseIsArchivedByName, 6);
+          setPinnedExercises(defaults);
+          savePinnedExercisesToStorage(defaults);
+        }
+        setPinnedInitialized(true);
+      }
     })();
 
     return () => {
       isMounted = false;
     };
-  }, [router, chartWindow]);
-
-  useEffect(() => {
-    if (!data || pinnedInitialized) return;
-    const stored = loadPinnedExercisesFromStorage();
-    const valid = stored?.filter((name) => !!data.exerciseStrengthSeries[name]) ?? [];
-    if (valid.length > 0) {
-      setPinnedExercises(valid);
-    } else {
-      const defaults = getDefaultPinnedExercises(data.exerciseStrengthSeries, data.exerciseIsArchivedByName, 6);
-      setPinnedExercises(defaults);
-      savePinnedExercisesToStorage(defaults);
-    }
-    setPinnedInitialized(true);
-  }, [data, pinnedInitialized]);
+  }, [router, chartWindow, pinnedInitialized]);
 
   const effectiveSelectedExercise =
     data && data.exerciseNames.length > 0
