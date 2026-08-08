@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import GradientButton from "@/shared/ui/GradientButton";
+import ModalSheet from "@/shared/ui/ModalSheet";
 import type { Exercise } from "@/features/log/types";
 
 const MEMO_MAX = 500;
@@ -21,8 +22,7 @@ export default function ExerciseNoteModal({ exercise, isBusy, onCancel, onSave }
   const isUnchanged = trimmed === (exercise.memo?.trim() ?? "");
 
   return (
-    /* Slides up from bottom on mobile; centred on desktop */
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/70 backdrop-blur-sm sm:items-center sm:p-4">
+    <ModalSheet>
       <div className="w-full max-w-lg rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Exercise Note</p>
         <h3 className="mt-1 text-lg font-semibold text-white">{exercise.name}</h3>
@@ -73,6 +73,6 @@ export default function ExerciseNoteModal({ exercise, isBusy, onCancel, onSave }
           </div>
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

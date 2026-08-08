@@ -1,4 +1,5 @@
 import GradientButton from "@/shared/ui/GradientButton";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 type AvatarCropModalProps = {
   sourceUrl: string;
@@ -26,8 +27,8 @@ export default function AvatarCropModal({
   onSave,
 }: AvatarCropModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-zinc-700 bg-zinc-900 p-5">
+    <ModalSheet backdropClassName="bg-zinc-950/75">
+      <div className="w-full max-w-lg rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 sm:rounded-2xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Crop Profile Photo</p>
         <div className="mt-3 flex justify-center">
           <div className="relative h-72 w-72 overflow-hidden rounded-full border-2 border-zinc-600 bg-zinc-950">
@@ -103,6 +104,6 @@ export default function AvatarCropModal({
           />
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

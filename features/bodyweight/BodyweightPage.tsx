@@ -33,6 +33,7 @@ import {
   getBodyweightHistoryView,
   getBodyweightSummary,
 } from "@/features/bodyweight/view";
+import ModalSheet from "@/shared/ui/ModalSheet";
 import {
   Area,
   CartesianGrid,
@@ -697,8 +698,8 @@ export default function BodyweightPage() {
       </div>
 
       {pendingOverwrite && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+        <ModalSheet>
+          <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Confirm Replace</p>
             <h3 className="mt-2 text-xl font-semibold text-white">Replace existing bodyweight log?</h3>
             <p className="mt-2 text-sm text-zinc-300">
@@ -722,12 +723,12 @@ export default function BodyweightPage() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
 
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+        <ModalSheet>
+          <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Confirm Delete</p>
             <h3 className="mt-2 text-xl font-semibold text-white">Delete bodyweight log?</h3>
             <p className="mt-2 text-sm text-zinc-300">
@@ -751,12 +752,12 @@ export default function BodyweightPage() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
 
       {pendingEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+        <ModalSheet>
+          <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Edit Bodyweight Log</p>
             <h3 className="mt-2 text-xl font-semibold text-white">Update date and weight</h3>
             <p className="mt-2 text-sm text-zinc-300">
@@ -845,7 +846,7 @@ export default function BodyweightPage() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
     </div>
   );

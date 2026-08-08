@@ -3,6 +3,7 @@
 import { useState } from "react";
 import GradientButton from "@/shared/ui/GradientButton";
 import type { Split } from "@/features/log/types";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 type MuscleGroupMoveModalProps = {
   muscleGroup: string;
@@ -18,8 +19,8 @@ export default function MuscleGroupMoveModal({ muscleGroup, currentSplit, isBusy
   const [targetSplit, setTargetSplit] = useState<Split | null>(null);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+    <ModalSheet>
+      <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Move Muscle Group</p>
         <h3 className="mt-2 text-xl font-semibold capitalize text-white">Move &ldquo;{muscleGroup}&rdquo;</h3>
         <p className="mt-2 text-sm text-zinc-300">
@@ -63,6 +64,6 @@ export default function MuscleGroupMoveModal({ muscleGroup, currentSplit, isBusy
           />
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

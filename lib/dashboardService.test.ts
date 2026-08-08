@@ -65,14 +65,19 @@ describe("dashboardService strength normalization", () => {
 });
 
 describe("dashboardService windowing", () => {
-  it("computes cutoff dates for 90d and 180d windows", () => {
+  it("computes cutoff dates for 30d, 90d and 180d windows", () => {
+    const thirty = getDashboardWindowStartIso("30d");
     const ninety = getDashboardWindowStartIso("90d");
     const oneEighty = getDashboardWindowStartIso("180d");
     const all = getDashboardWindowStartIso("all");
 
+    expect(thirty).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(ninety).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(oneEighty).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(all).toBeNull();
-    expect(ninety! <= oneEighty!).toBe(false);
+
+    // Shorter windows start later: 30d > 90d > 180d as ISO date strings.
+    expect(thirty! > ninety!).toBe(true);
+    expect(ninety! > oneEighty!).toBe(true);
   });
 });

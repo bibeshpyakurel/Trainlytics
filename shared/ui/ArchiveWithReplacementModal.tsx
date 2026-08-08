@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Exercise } from "@/features/log/types";
 import GradientButton from "@/shared/ui/GradientButton";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 type ArchiveWithReplacementModalProps = {
   exercise: Exercise;
@@ -22,8 +23,8 @@ export default function ArchiveWithReplacementModal({
   const candidates = activeExercisesInSplit.filter((e) => e.id !== exercise.id);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+    <ModalSheet>
+      <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Archive Exercise</p>
         <h3 className="mt-2 text-xl font-semibold text-white">Archive {exercise.name}?</h3>
 
@@ -71,6 +72,6 @@ export default function ArchiveWithReplacementModal({
           />
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

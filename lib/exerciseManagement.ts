@@ -189,7 +189,6 @@ export async function loadManagedExercises(userId: string) {
       if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
       const splitDiff = SPLIT_ORDER.indexOf(a.split) - SPLIT_ORDER.indexOf(b.split);
       if (splitDiff !== 0) return splitDiff;
-      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
       return a.name.localeCompare(b.name);
     });
 
@@ -653,21 +652,6 @@ export async function moveMuscleGroupToSplit(
   }
 
   return { ok: true as const, movedCount: exerciseIds.length };
-}
-
-export async function reorderExercisesInGroup(userId: string, orderedIds: string[]) {
-  for (let i = 0; i < orderedIds.length; i++) {
-    const { error } = await supabase
-      .from(TABLES.exercises)
-      .update({ sort_order: i + 1 })
-      .eq("id", orderedIds[i])
-      .eq("user_id", userId);
-
-    if (error) {
-      return { ok: false as const, message: error.message };
-    }
-  }
-  return { ok: true as const };
 }
 
 export async function updateExerciseMemo(

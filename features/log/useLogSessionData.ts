@@ -164,7 +164,6 @@ export function useLogSessionData({
         .eq("user_id", userId)
         .eq("split", split)
         .eq("is_active", true)
-        .order("sort_order")
         .order("name");
       if (isStale()) return;
 

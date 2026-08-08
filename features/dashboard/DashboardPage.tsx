@@ -24,6 +24,7 @@ import {
 import ArchivedBadge from "@/shared/ui/ArchivedBadge";
 import GradientButton from "@/shared/ui/GradientButton";
 import TogglePill from "@/shared/ui/TogglePill";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 function formatChartLabel(dateIso: string) {
   const date = new Date(`${dateIso}T00:00:00`);
@@ -177,6 +178,7 @@ const EXERCISE_CATEGORY_LABELS: Record<"push" | "pull" | "legs" | "core", string
 };
 
 const WINDOW_OPTIONS: Array<{ id: DashboardChartWindow; label: string }> = [
+  { id: "30d", label: "30 days" },
   { id: "90d", label: "90 days" },
   { id: "180d", label: "180 days" },
   { id: "all", label: "All" },
@@ -224,7 +226,7 @@ export default function DashboardPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
-  const [chartWindow, setChartWindow] = useState<DashboardChartWindow>("90d");
+  const [chartWindow, setChartWindow] = useState<DashboardChartWindow>("30d");
   const [showArchivedExercises, setShowArchivedExercises] = useState(false);
   const [pinnedExercises, setPinnedExercises] = useState<string[]>([]);
   const [showCustomizer, setShowCustomizer] = useState(false);
@@ -336,13 +338,15 @@ export default function DashboardPage() {
 
         {viewModel.errorMessage && <p className="mt-4 text-sm text-red-300">{viewModel.errorMessage}</p>}
 
-        <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1">
+        {/* Full-width segmented control on phones; compact pill row from sm: up */}
+        <div className="mt-5 flex w-full items-center gap-1 rounded-full border border-zinc-700/70 bg-zinc-900/70 p-1 sm:inline-flex sm:w-auto sm:gap-2">
           {WINDOW_OPTIONS.map((option) => (
             <button
               key={option.id}
               type="button"
               onClick={() => setChartWindow(option.id)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+              aria-pressed={chartWindow === option.id}
+              className={`flex min-h-11 flex-1 items-center justify-center rounded-full px-3 text-xs font-semibold transition sm:min-h-0 sm:flex-none sm:py-1 ${
                 chartWindow === option.id
                   ? "bg-gradient-to-r from-amber-400 via-orange-400 to-red-400 text-zinc-900"
                   : "text-zinc-300 hover:bg-zinc-800"
@@ -501,11 +505,8 @@ export default function DashboardPage() {
       </div>
 
       {showCustomizer && data && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/70 backdrop-blur-sm sm:items-center sm:p-4">
-          <div
-            className="flex w-full max-w-lg flex-col rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl"
-            style={{ maxHeight: "85vh" }}
-          >
+        <ModalSheet>
+          <div className="flex max-h-[85dvh] w-full max-w-lg flex-col rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Customize Charts</p>
             <h3 className="mt-2 text-xl font-semibold text-white">Choose Exercises</h3>
             <p className="mt-1 text-sm text-zinc-400">
@@ -595,7 +596,7 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
     </div>
   );
