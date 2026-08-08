@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DashboardData } from "@/lib/dashboardTypes";
 import { loadDashboardData, type DashboardChartWindow } from "@/lib/dashboardService";
@@ -229,7 +229,7 @@ export default function DashboardPage() {
   const [pinnedExercises, setPinnedExercises] = useState<string[]>([]);
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [customizerSnapshot, setCustomizerSnapshot] = useState<string[]>([]);
-  const [pinnedInitialized, setPinnedInitialized] = useState(false);
+  const pinnedInitializedRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -255,6 +255,24 @@ export default function DashboardPage() {
       }
 
       setData(result.data);
+
+      if (!pinnedInitializedRef.current) {
+        pinnedInitializedRef.current = true;
+        const stored = loadPinnedExercisesFromStorage();
+        const valid = stored?.filter((name) => !!result.data.exerciseStrengthSeries[name]) ?? [];
+        if (valid.length > 0) {
+          setPinnedExercises(valid);
+        } else {
+          const defaults = getDefaultPinnedExercises(
+            result.data.exerciseStrengthSeries,
+            result.data.exerciseIsArchivedByName,
+            6
+          );
+          setPinnedExercises(defaults);
+          savePinnedExercisesToStorage(defaults);
+        }
+      }
+
       setLoading(false);
     })();
 
@@ -262,20 +280,6 @@ export default function DashboardPage() {
       isMounted = false;
     };
   }, [router, chartWindow]);
-
-  useEffect(() => {
-    if (!data || pinnedInitialized) return;
-    const stored = loadPinnedExercisesFromStorage();
-    const valid = stored?.filter((name) => !!data.exerciseStrengthSeries[name]) ?? [];
-    if (valid.length > 0) {
-      setPinnedExercises(valid);
-    } else {
-      const defaults = getDefaultPinnedExercises(data.exerciseStrengthSeries, data.exerciseIsArchivedByName, 6);
-      setPinnedExercises(defaults);
-      savePinnedExercisesToStorage(defaults);
-    }
-    setPinnedInitialized(true);
-  }, [data, pinnedInitialized]);
 
   const effectiveSelectedExercise =
     data && data.exerciseNames.length > 0

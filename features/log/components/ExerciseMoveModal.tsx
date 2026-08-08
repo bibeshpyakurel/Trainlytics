@@ -18,7 +18,8 @@ const SPLITS: Split[] = ["push", "pull", "legs", "core"];
 
 export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, onConfirm }: ExerciseMoveModalProps) {
   const [targetSplit, setTargetSplit] = useState<Split>(exercise.split);
-  const [targetMuscleGroup, setTargetMuscleGroup] = useState(exercise.muscle_group);
+  // null means "follow the default for the current split"; set once the user picks explicitly.
+  const [muscleGroupOverride, setMuscleGroupOverride] = useState<string | null>(null);
   const [muscleGroupsBySplit, setMuscleGroupsBySplit] = useState<Partial<Record<Split, string[]>>>({});
   const [loadingGroups, setLoadingGroups] = useState(true);
 
@@ -46,18 +47,11 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
     void fetchGroups();
   }, [userId]);
 
-  useEffect(() => {
-    const groups = muscleGroupsBySplit[targetSplit] ?? [];
-    if (groups.includes(exercise.muscle_group)) {
-      setTargetMuscleGroup(exercise.muscle_group);
-    } else if (groups.length > 0) {
-      setTargetMuscleGroup(groups[0]!);
-    } else {
-      setTargetMuscleGroup("");
-    }
-  }, [targetSplit, muscleGroupsBySplit, exercise.muscle_group]);
-
   const groupOptions = muscleGroupsBySplit[targetSplit] ?? [];
+  const defaultMuscleGroup = groupOptions.includes(exercise.muscle_group)
+    ? exercise.muscle_group
+    : groupOptions[0] ?? "";
+  const targetMuscleGroup = muscleGroupOverride ?? defaultMuscleGroup;
   const isUnchanged = targetSplit === exercise.split && targetMuscleGroup === exercise.muscle_group;
 
   return (
@@ -77,7 +71,10 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
                   <button
                     key={s}
                     type="button"
-                    onClick={() => setTargetSplit(s)}
+                    onClick={() => {
+                      setTargetSplit(s);
+                      setMuscleGroupOverride(null);
+                    }}
                     className={`rounded-lg border px-3 py-2 text-sm font-semibold capitalize transition ${
                       targetSplit === s
                         ? "border-amber-300/70 bg-amber-400/10 text-amber-200"
@@ -97,7 +94,7 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
               {groupOptions.length > 0 ? (
                 <select
                   value={targetMuscleGroup}
-                  onChange={(e) => setTargetMuscleGroup(e.target.value)}
+                  onChange={(e) => setMuscleGroupOverride(e.target.value)}
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
                 >
                   {groupOptions.map((g) => (
@@ -112,7 +109,7 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
               ) : (
                 <input
                   value={targetMuscleGroup}
-                  onChange={(e) => setTargetMuscleGroup(e.target.value)}
+                  onChange={(e) => setMuscleGroupOverride(e.target.value)}
                   placeholder="e.g. chest, back, core"
                   maxLength={40}
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-100 outline-none ring-amber-300/70 transition focus:ring-2"
