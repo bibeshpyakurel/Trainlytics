@@ -152,6 +152,7 @@ export type Database = {
           created_at: string;
           id: string;
           is_active: boolean;
+          memo: string | null;
           metric_type: Database["public"]["Enums"]["exercise_metric_type"];
           muscle_group: string;
           name: string;
@@ -164,6 +165,7 @@ export type Database = {
           created_at?: string;
           id?: string;
           is_active?: boolean;
+          memo?: string | null;
           metric_type?: Database["public"]["Enums"]["exercise_metric_type"];
           muscle_group: string;
           name: string;
@@ -176,6 +178,7 @@ export type Database = {
           created_at?: string;
           id?: string;
           is_active?: boolean;
+          memo?: string | null;
           metric_type?: Database["public"]["Enums"]["exercise_metric_type"];
           muscle_group?: string;
           name?: string;

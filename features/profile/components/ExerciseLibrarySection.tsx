@@ -11,7 +11,7 @@ import {
 } from "@/lib/exerciseManagement";
 import ConfirmModal from "@/shared/ui/ConfirmModal";
 import GradientButton from "@/shared/ui/GradientButton";
-import ArchivedBadge from "@/shared/ui/ArchivedBadge";
+import OverflowMenu from "@/shared/ui/OverflowMenu";
 
 type ExerciseLibrarySectionProps = {
   userId: string;
@@ -34,6 +34,7 @@ export default function ExerciseLibrarySection({ userId, disabled = false, onSta
   const [pendingRestore, setPendingRestore] = useState<ManagedExercise | null>(null);
   const [pendingReplacementEdit, setPendingReplacementEdit] = useState<ManagedExercise | null>(null);
   const [replacementSelectionId, setReplacementSelectionId] = useState<string>("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const refreshExercises = useCallback(async (showLoading = true) => {
     if (!userId) {
@@ -206,61 +207,72 @@ export default function ExerciseLibrarySection({ userId, disabled = false, onSta
           ) : archivedExercises.length === 0 ? (
             <p className="text-sm text-zinc-400">No archived exercises yet.</p>
           ) : (
-            archivedExercises.map((exercise) => (
-              <div key={exercise.id} className="rounded-xl border border-zinc-700/80 bg-zinc-900/60 px-4 py-3">
-                <p className="flex items-center text-sm font-semibold text-zinc-500 line-through">
-                  {exercise.name}
-                  <ArchivedBadge />
-                </p>
-                <p className="mt-1 text-xs text-zinc-400">
-                  {formatSplit(exercise.split)} · {exercise.muscle_group} · {formatMetricType(exercise.metric_type)}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {exercise.loggedSetCount} historical set{exercise.loggedSetCount === 1 ? "" : "s"} across {exercise.loggedSessionCount} session{exercise.loggedSessionCount === 1 ? "" : "s"}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {exercise.replaced_by_exercise_id && exerciseById.get(exercise.replaced_by_exercise_id)
-                    ? (
-                      <>
-                        Dashboard trend merges into <span className="font-medium text-zinc-300">{exerciseById.get(exercise.replaced_by_exercise_id)?.name}</span>.
-                      </>
-                    )
-                    : "Not linked to a replacement yet. Its history appears as a separate exercise trend."}
-                </p>
-                <div className="mt-3 rounded-lg border border-red-400/25 bg-red-500/5 px-3 py-2 text-xs text-red-200">
-                  Permanent delete removes this exercise and all related workout history from the backend. This cannot be undone.
+            archivedExercises.map((exercise) => {
+              const isExpanded = expandedId === exercise.id;
+              const replacementExercise = exercise.replaced_by_exercise_id
+                ? exerciseById.get(exercise.replaced_by_exercise_id)
+                : null;
+              return (
+                <div key={exercise.id} className="rounded-xl border border-zinc-700/80 bg-zinc-900/60">
+                  <div className="flex items-center gap-2 px-3 py-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(isExpanded ? null : exercise.id)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <span className="truncate text-sm font-medium text-zinc-200">{exercise.name}</span>
+                      <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                        {formatSplit(exercise.split)}
+                      </span>
+                      <span className={`ml-auto shrink-0 text-[10px] text-zinc-600 transition-transform ${isExpanded ? "rotate-180" : ""}`}>▾</span>
+                    </button>
+                    <OverflowMenu
+                      disabled={disabled}
+                      items={[
+                        {
+                          label: exercise.replaced_by_exercise_id ? "Edit Replacement Link" : "Link Replacement",
+                          onClick: () => {
+                            setPendingReplacementEdit(exercise);
+                            setReplacementSelectionId(exercise.replaced_by_exercise_id ?? "");
+                          },
+                        },
+                        {
+                          label: "Unarchive",
+                          onClick: () => setPendingRestore(exercise),
+                        },
+                        {
+                          label: "Delete Permanently",
+                          onClick: () => setPendingDelete(exercise),
+                          variant: "danger" as const,
+                        },
+                      ]}
+                    />
+                  </div>
+
+                  {isExpanded && (
+                    <div className="border-t border-zinc-700/60 px-3 pb-3 pt-2.5">
+                      <p className="text-xs text-zinc-400">
+                        {exercise.muscle_group} · {formatMetricType(exercise.metric_type)}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {exercise.loggedSetCount} historical set{exercise.loggedSetCount === 1 ? "" : "s"} across{" "}
+                        {exercise.loggedSessionCount} session{exercise.loggedSessionCount === 1 ? "" : "s"}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {replacementExercise
+                          ? (
+                            <>Dashboard trend merges into <span className="font-medium text-zinc-300">{replacementExercise.name}</span>.</>
+                          )
+                          : "No replacement linked — history appears as a separate trend."}
+                      </p>
+                      <div className="mt-2 rounded-lg border border-red-400/25 bg-red-500/5 px-3 py-2 text-xs text-red-200">
+                        Permanent delete removes this exercise and all related workout history. This cannot be undone.
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPendingReplacementEdit(exercise);
-                      setReplacementSelectionId(exercise.replaced_by_exercise_id ?? "");
-                    }}
-                    disabled={disabled}
-                    className="rounded-md border border-amber-400/60 px-3 py-1.5 text-xs font-medium text-amber-200 transition hover:bg-amber-500/10 disabled:opacity-50"
-                  >
-                    {exercise.replaced_by_exercise_id ? "Edit Replacement Link" : "Link Replacement"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPendingRestore(exercise)}
-                    disabled={disabled}
-                    className="rounded-md border border-emerald-400/60 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:bg-emerald-500/10 disabled:opacity-50"
-                  >
-                    Unarchive
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPendingDelete(exercise)}
-                    disabled={disabled}
-                    className="rounded-md border border-red-400/60 px-3 py-1.5 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
-                  >
-                    Delete Permanently
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

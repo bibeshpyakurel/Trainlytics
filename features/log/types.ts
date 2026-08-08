@@ -12,6 +12,7 @@ export type Exercise = {
   sort_order: number;
   is_active: boolean;
   replaced_by_exercise_id?: string | null;
+  memo?: string | null;
 };
 
 export type WeightedSet = { reps: string; weight: string; unit: Unit };

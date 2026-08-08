@@ -102,7 +102,7 @@ describe("buildDashboardDataFromResults scenarios", () => {
 
     const benchSeries = data.exerciseStrengthSeries["Bench Press"];
     expect(benchSeries).toHaveLength(1);
-    expect(benchSeries?.[0]?.score).toBeCloseTo(510.29, 1);
+    expect(benchSeries?.[0]?.score).toBeCloseTo(102.058, 1);
   });
 
   it("handles large datasets without dropping exercise trends", () => {

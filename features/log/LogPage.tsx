@@ -21,16 +21,30 @@ import DurationSetRow from "@/features/log/components/DurationSetRow";
 import FeedbackOverlay from "@/features/log/components/overlays/FeedbackOverlay";
 import SavedWorkoutOverlay from "@/features/log/components/overlays/SavedWorkoutOverlay";
 import ExportFlowModal from "@/features/log/components/ExportFlowModal";
+import SortableExerciseGroup from "@/features/log/components/SortableExerciseGroup";
+import ExerciseNoteModal from "@/features/log/components/ExerciseNoteModal";
+import ExerciseMoveModal from "@/features/log/components/ExerciseMoveModal";
+import ExerciseRenameModal from "@/features/log/components/ExerciseRenameModal";
+import MuscleGroupMoveModal from "@/features/log/components/MuscleGroupMoveModal";
+import MuscleGroupRenameModal from "@/features/log/components/MuscleGroupRenameModal";
 import { createDefaultDurationPair, createDefaultWeightedPair, LOG_MESSAGES } from "@/features/log/constants";
 import {
   archiveManagedExercise,
   createManagedExercise,
+  deleteManagedExercise,
+  moveExercise,
+  moveMuscleGroupToSplit,
+  renameManagedExercise,
+  renameMuscleGroup,
+  reorderExercisesInGroup,
+  updateExerciseMemo,
   type ExerciseDraft,
 } from "@/lib/exerciseManagement";
 import { type WorkoutExportScope } from "@/lib/workoutExport";
 import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
 import ConfirmModal from "@/shared/ui/ConfirmModal";
 import GradientButton from "@/shared/ui/GradientButton";
+import OverflowMenu from "@/shared/ui/OverflowMenu";
 import ArchiveWithReplacementModal from "@/shared/ui/ArchiveWithReplacementModal";
 import type {
   DurationSet,
@@ -74,6 +88,14 @@ export default function LogWorkoutPage() {
   const [exerciseDraft, setExerciseDraft] = useState<ExerciseDraft>(() => defaultExerciseDraft("push"));
   const [isSavingExercise, setIsSavingExercise] = useState(false);
   const [pendingExerciseArchive, setPendingExerciseArchive] = useState<Exercise | null>(null);
+  const [pendingExerciseRename, setPendingExerciseRename] = useState<Exercise | null>(null);
+  const [pendingExerciseMove, setPendingExerciseMove] = useState<Exercise | null>(null);
+  const [pendingExerciseDelete, setPendingExerciseDelete] = useState<Exercise | null>(null);
+  const [pendingExerciseNote, setPendingExerciseNote] = useState<Exercise | null>(null);
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [pendingMuscleGroupRename, setPendingMuscleGroupRename] = useState<string | null>(null);
+  const [pendingMuscleGroupMove, setPendingMuscleGroupMove] = useState<string | null>(null);
+  const [loggedInUserId, setLoggedInUserId] = useState<string | null>(null);
   const [pendingExportRequest, setPendingExportRequest] = useState<{
     scope: WorkoutExportScope;
     userId: string;
@@ -203,6 +225,12 @@ export default function LogWorkoutPage() {
   }, []);
 
   useEffect(() => {
+    getCurrentSessionUser().then((authState) => {
+      if (authState.status === "ok") setLoggedInUserId(authState.userId);
+    });
+  }, []);
+
+  useEffect(() => {
     setExerciseDraft(defaultExerciseDraft(split));
   }, [split]);
 
@@ -328,6 +356,127 @@ export default function LogWorkoutPage() {
       return next;
     });
     setMsg("Exercise archived. Historical workout data remains available ✅");
+  }
+
+  async function confirmRenameExercise(newName: string) {
+    if (!pendingExerciseRename || isSavingExercise) return;
+    const target = pendingExerciseRename;
+    setIsSavingExercise(true);
+    const userId = await requireUserId();
+    if (!userId) { setIsSavingExercise(false); return; }
+    const result = await renameManagedExercise(userId, target.id, newName);
+    setIsSavingExercise(false);
+    if (!result.ok) { setMsg(`Failed renaming exercise: ${result.message}`); return; }
+    setExercises((current) =>
+      current.map((ex) => ex.id === target.id ? { ...ex, name: result.normalizedName } : ex)
+    );
+    setPendingExerciseRename(null);
+    setMsg(`Exercise renamed to "${result.normalizedName}" ✅`);
+  }
+
+  async function confirmMoveExercise(targetSplit: Split, targetMuscleGroup: string) {
+    if (!pendingExerciseMove || isSavingExercise) return;
+    const target = pendingExerciseMove;
+    setIsSavingExercise(true);
+    const userId = await requireUserId();
+    if (!userId) { setIsSavingExercise(false); return; }
+    const result = await moveExercise(userId, target.id, targetSplit, targetMuscleGroup);
+    setIsSavingExercise(false);
+    if (!result.ok) { setMsg(`Failed moving exercise: ${result.message}`); return; }
+    if (targetSplit !== split) {
+      setExercises((current) => current.filter((ex) => ex.id !== target.id));
+    } else {
+      setExercises((current) =>
+        current.map((ex) => ex.id === target.id ? { ...ex, muscle_group: targetMuscleGroup } : ex)
+      );
+    }
+    setPendingExerciseMove(null);
+    setMsg(`${target.name} moved to ${targetSplit} · ${targetMuscleGroup} ✅`);
+  }
+
+  async function confirmDeleteExercise() {
+    if (!pendingExerciseDelete || isSavingExercise) return;
+    const target = pendingExerciseDelete;
+    setIsSavingExercise(true);
+    setPendingExerciseDelete(null);
+    const userId = await requireUserId();
+    if (!userId) { setIsSavingExercise(false); return; }
+    const result = await deleteManagedExercise(userId, target.id);
+    setIsSavingExercise(false);
+    if (!result.ok) { setMsg(`Failed deleting exercise: ${result.message}`); return; }
+    setExercises((current) => current.filter((ex) => ex.id !== target.id));
+    setWeightedForm((current) => { const next = { ...current }; delete next[target.id]; return next; });
+    setDurationForm((current) => { const next = { ...current }; delete next[target.id]; return next; });
+    setLastModifiedBySetKey((current) => {
+      const next = { ...current };
+      delete next[makeSetKey(target.id, 1)];
+      delete next[makeSetKey(target.id, 2)];
+      return next;
+    });
+    setMsg(`${target.name} permanently deleted (${result.deletedSetCount} set${result.deletedSetCount === 1 ? "" : "s"} removed) ✅`);
+  }
+
+  async function confirmRenameMuscleGroup(newName: string) {
+    if (!pendingMuscleGroupRename || isSavingExercise) return;
+    const oldName = pendingMuscleGroupRename;
+    setIsSavingExercise(true);
+    const userId = await requireUserId();
+    if (!userId) { setIsSavingExercise(false); return; }
+    const result = await renameMuscleGroup(userId, split, oldName, newName);
+    setIsSavingExercise(false);
+    if (!result.ok) { setMsg(`Failed renaming muscle group: ${result.message}`); return; }
+    setExercises((current) =>
+      current.map((ex) => ex.muscle_group === oldName ? { ...ex, muscle_group: result.normalizedName } : ex)
+    );
+    setPendingMuscleGroupRename(null);
+    setMsg(`Muscle group renamed to "${result.normalizedName}" ✅`);
+  }
+
+  async function handleSaveExerciseNote(memo: string | null) {
+    if (!pendingExerciseNote) return;
+    const target = pendingExerciseNote;
+    setPendingExerciseNote(null);
+    setIsSavingNote(true);
+    setExercises((current) =>
+      current.map((ex) => ex.id === target.id ? { ...ex, memo } : ex)
+    );
+    const userId = await requireUserId();
+    if (!userId) { setIsSavingNote(false); return; }
+    const result = await updateExerciseMemo(userId, target.id, memo);
+    setIsSavingNote(false);
+    if (!result.ok) {
+      setMsg(`Failed saving note: ${result.message}`);
+      setExercises((current) =>
+        current.map((ex) => ex.id === target.id ? { ...ex, memo: target.memo } : ex)
+      );
+    }
+  }
+
+  async function handleReorderExercises(orderedIds: string[]) {
+    setExercises((current) =>
+      current.map((ex) => {
+        const newIndex = orderedIds.indexOf(ex.id);
+        return newIndex === -1 ? ex : { ...ex, sort_order: newIndex + 1 };
+      })
+    );
+    const userId = await requireUserId();
+    if (!userId) return;
+    const result = await reorderExercisesInGroup(userId, orderedIds);
+    if (!result.ok) setMsg(`Failed saving exercise order: ${result.message}`);
+  }
+
+  async function confirmMoveMuscleGroup(targetSplit: Split) {
+    if (!pendingMuscleGroupMove || isSavingExercise) return;
+    const muscle = pendingMuscleGroupMove;
+    setIsSavingExercise(true);
+    const userId = await requireUserId();
+    if (!userId) { setIsSavingExercise(false); return; }
+    const result = await moveMuscleGroupToSplit(userId, split, muscle, targetSplit);
+    setIsSavingExercise(false);
+    if (!result.ok) { setMsg(`Failed moving muscle group: ${result.message}`); return; }
+    setExercises((current) => current.filter((ex) => ex.muscle_group !== muscle));
+    setPendingMuscleGroupMove(null);
+    setMsg(`"${muscle}" group moved to ${targetSplit} (${result.movedCount} exercise${result.movedCount === 1 ? "" : "s"}) ✅`);
   }
 
   async function requestScopeExport(scope: WorkoutExportScope) {
@@ -769,6 +918,12 @@ export default function LogWorkoutPage() {
     });
   }
 
+  function navigateToSession(session: RecentWorkoutSession) {
+    setSplit(session.split);
+    setDate(session.session_date);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function cancelEditSessionDate() {
     setPendingSessionEdit(null);
   }
@@ -1075,99 +1230,149 @@ export default function LogWorkoutPage() {
 
         </div>
 
+        {!isCurrentDate && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-300/80">Editing Past Session</p>
+              <p className="mt-0.5 text-sm font-medium text-violet-200">
+                {formatLastSessionDate(date)} · {splitLabel}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDate(today)}
+              className="rounded-md border border-violet-400/40 px-3 py-1.5 text-xs font-medium text-violet-300 transition hover:bg-violet-500/10"
+            >
+              Back to today
+            </button>
+          </div>
+        )}
+
         <div className="mt-6 space-y-6">
           {grouped.map(([muscle, list]) => (
             <div key={muscle} className="rounded-3xl border border-zinc-700/80 bg-zinc-900/70 p-5 backdrop-blur-md">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold capitalize text-white">{muscle}</h2>
-                <button
-                  type="button"
-                  onClick={() => void requestScopeExport({ level: "muscle-group", muscleGroup: muscle, label: `${toDisplayLabel(muscle)} Muscle Group` })}
-                  className="rounded-md border border-sky-400/60 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10"
-                >
-                  Export {toDisplayLabel(muscle)}
-                </button>
+                <OverflowMenu
+                  disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                  items={[
+                    {
+                      label: `Export ${toDisplayLabel(muscle)}`,
+                      onClick: () => void requestScopeExport({ level: "muscle-group", muscleGroup: muscle, label: `${toDisplayLabel(muscle)} Muscle Group` }),
+                    },
+                    {
+                      label: "Rename",
+                      onClick: () => setPendingMuscleGroupRename(muscle),
+                    },
+                    {
+                      label: "Move",
+                      onClick: () => setPendingMuscleGroupMove(muscle),
+                    },
+                  ]}
+                />
               </div>
 
-              <div className="mt-4 space-y-4">
-                {list.map((ex) => (
-                  <div key={ex.id} className="rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-zinc-100">{ex.name}</div>
-                        <p className="mt-1 text-xs uppercase tracking-wide text-zinc-500">{ex.metric_type === "DURATION" ? "Duration" : "Weighted reps"}</p>
+              <div className="mt-4">
+                <SortableExerciseGroup
+                  exercises={list}
+                  disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                  onReorder={(orderedIds) => void handleReorderExercises(orderedIds)}
+                  renderExercise={(ex) => (
+                    <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-zinc-100">{ex.name}</div>
+                          {ex.memo && (
+                            <p className="mt-0.5 line-clamp-1 text-xs text-zinc-400">
+                              📝 {ex.memo}
+                            </p>
+                          )}
+                          <p className="mt-0.5 text-xs uppercase tracking-wide text-zinc-500">{ex.metric_type === "DURATION" ? "Duration" : "Weighted reps"}</p>
+                        </div>
+
+                        <OverflowMenu
+                          disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
+                          items={[
+                            {
+                              label: "Export",
+                              onClick: () => void requestScopeExport({ level: "exercise", exerciseId: ex.id, label: ex.name }),
+                            },
+                            {
+                              label: ex.memo ? "Edit Note" : "Add Note",
+                              onClick: () => setPendingExerciseNote(ex),
+                            },
+                            {
+                              label: "Archive",
+                              onClick: () => setPendingExerciseArchive(ex),
+                            },
+                            {
+                              label: "Rename",
+                              onClick: () => setPendingExerciseRename(ex),
+                            },
+                            {
+                              label: "Move",
+                              onClick: () => setPendingExerciseMove(ex),
+                            },
+                            {
+                              label: "Delete permanently",
+                              onClick: () => setPendingExerciseDelete(ex),
+                              variant: "danger" as const,
+                            },
+                          ]}
+                        />
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void requestScopeExport({ level: "exercise", exerciseId: ex.id, label: ex.name })}
-                          disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
-                          className="rounded-md border border-sky-400/60 px-2 py-1 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10 disabled:opacity-50"
-                        >
-                          Export
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPendingExerciseArchive(ex)}
-                          disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
-                          className="rounded-md border border-amber-300/60 px-2 py-1 text-xs font-medium text-amber-200 transition hover:bg-amber-400/10 disabled:opacity-50"
-                        >
-                          Archive
-                        </button>
-                      </div>
+                      {ex.metric_type === "WEIGHTED_REPS" ? (
+                        <div className="mt-3 grid gap-3">
+                          {[0, 1].map((i) => {
+                            const setIdx = i as 0 | 1;
+                            const row = weightedForm[ex.id]?.[setIdx];
+                            const lastWeightedSet = lastWeightedSetByKey[makeSetKey(ex.id, setIdx + 1)];
+                            return (
+                              <WeightedSetRow
+                                key={i}
+                                setIndex={setIdx}
+                                exerciseId={ex.id}
+                                row={row}
+                                isCurrentDate={isCurrentDate}
+                                loading={isGlobalBusy || savingSetKey === makeSetKey(ex.id, setIdx + 1)}
+                                lastWeightedSet={lastWeightedSet}
+                                lastModified={lastModifiedBySetKey[makeSetKey(ex.id, setIdx + 1)]}
+                                onUpdateReps={(value) => updateWeighted(ex.id, setIdx, { reps: value })}
+                                onUpdateWeight={(value) => updateWeighted(ex.id, setIdx, { weight: value })}
+                                onUpdateUnit={(value) => updateWeighted(ex.id, setIdx, { unit: value })}
+                                onSave={() => void saveSingleSet(ex, setIdx)}
+                                onDelete={() => requestDeleteSingleSet(ex, setIdx)}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="mt-3 grid gap-3">
+                          {[0, 1].map((i) => {
+                            const setIdx = i as 0 | 1;
+                            const row = durationForm[ex.id]?.[setIdx];
+                            const lastDurationSet = lastDurationSetByKey[makeSetKey(ex.id, setIdx + 1)];
+                            return (
+                              <DurationSetRow
+                                key={i}
+                                setIndex={setIdx}
+                                row={row}
+                                isCurrentDate={isCurrentDate}
+                                loading={isGlobalBusy || savingSetKey === makeSetKey(ex.id, setIdx + 1)}
+                                lastDurationSet={lastDurationSet}
+                                lastModified={lastModifiedBySetKey[makeSetKey(ex.id, setIdx + 1)]}
+                                onUpdateSeconds={(value) => updateDuration(ex.id, setIdx, value)}
+                                onSave={() => void saveSingleSet(ex, setIdx)}
+                                onDelete={() => requestDeleteSingleSet(ex, setIdx)}
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-
-                    {ex.metric_type === "WEIGHTED_REPS" ? (
-                      <div className="mt-3 grid gap-3">
-                        {[0, 1].map((i) => {
-                          const setIdx = i as 0 | 1;
-                          const row = weightedForm[ex.id]?.[setIdx];
-                          const lastWeightedSet = lastWeightedSetByKey[makeSetKey(ex.id, setIdx + 1)];
-                          return (
-                            <WeightedSetRow
-                              key={i}
-                              setIndex={setIdx}
-                              exerciseId={ex.id}
-                              row={row}
-                              isCurrentDate={isCurrentDate}
-                              loading={isGlobalBusy || savingSetKey === makeSetKey(ex.id, setIdx + 1)}
-                              lastWeightedSet={lastWeightedSet}
-                              lastModified={lastModifiedBySetKey[makeSetKey(ex.id, setIdx + 1)]}
-                              onUpdateReps={(value) => updateWeighted(ex.id, setIdx, { reps: value })}
-                              onUpdateWeight={(value) => updateWeighted(ex.id, setIdx, { weight: value })}
-                              onUpdateUnit={(value) => updateWeighted(ex.id, setIdx, { unit: value })}
-                              onSave={() => void saveSingleSet(ex, setIdx)}
-                              onDelete={() => requestDeleteSingleSet(ex, setIdx)}
-                            />
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="mt-3 grid gap-3">
-                        {[0, 1].map((i) => {
-                          const setIdx = i as 0 | 1;
-                          const row = durationForm[ex.id]?.[setIdx];
-                          const lastDurationSet = lastDurationSetByKey[makeSetKey(ex.id, setIdx + 1)];
-                          return (
-                            <DurationSetRow
-                              key={i}
-                              setIndex={setIdx}
-                              row={row}
-                              isCurrentDate={isCurrentDate}
-                              loading={isGlobalBusy || savingSetKey === makeSetKey(ex.id, setIdx + 1)}
-                              lastDurationSet={lastDurationSet}
-                              lastModified={lastModifiedBySetKey[makeSetKey(ex.id, setIdx + 1)]}
-                              onUpdateSeconds={(value) => updateDuration(ex.id, setIdx, value)}
-                              onSave={() => void saveSingleSet(ex, setIdx)}
-                              onDelete={() => requestDeleteSingleSet(ex, setIdx)}
-                            />
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  )}
+                />
               </div>
             </div>
           ))}
@@ -1292,7 +1497,7 @@ export default function LogWorkoutPage() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => requestEditSessionDate(session)}
+                      onClick={() => navigateToSession(session)}
                       disabled={isGlobalBusy}
                       className="rounded-md border border-violet-400/60 px-2 py-1 text-xs font-medium text-violet-200 transition hover:bg-violet-500/10 disabled:opacity-50"
                     >
@@ -1356,6 +1561,15 @@ export default function LogWorkoutPage() {
         />
       )}
 
+      {pendingExerciseNote && (
+        <ExerciseNoteModal
+          exercise={pendingExerciseNote}
+          isBusy={isSavingNote}
+          onCancel={() => setPendingExerciseNote(null)}
+          onSave={(memo) => void handleSaveExerciseNote(memo)}
+        />
+      )}
+
       {pendingExerciseArchive && (
         <ArchiveWithReplacementModal
           exercise={pendingExerciseArchive}
@@ -1364,6 +1578,68 @@ export default function LogWorkoutPage() {
           )}
           onCancel={() => setPendingExerciseArchive(null)}
           onConfirm={(replacedByExerciseId) => void confirmArchiveExercise(replacedByExerciseId)}
+        />
+      )}
+
+      {pendingExerciseRename && (
+        <ExerciseRenameModal
+          exercise={pendingExerciseRename}
+          isBusy={isSavingExercise}
+          onCancel={() => setPendingExerciseRename(null)}
+          onConfirm={(newName) => void confirmRenameExercise(newName)}
+        />
+      )}
+
+      {pendingExerciseMove && loggedInUserId && (
+        <ExerciseMoveModal
+          exercise={pendingExerciseMove}
+          userId={loggedInUserId}
+          isBusy={isSavingExercise}
+          onCancel={() => setPendingExerciseMove(null)}
+          onConfirm={(targetSplit, targetMuscleGroup) => void confirmMoveExercise(targetSplit, targetMuscleGroup)}
+        />
+      )}
+
+      {pendingExerciseDelete && (
+        <ConfirmModal
+          titleTag="Permanent Delete"
+          title={`Delete ${pendingExerciseDelete.name} permanently?`}
+          description={
+            <>
+              This removes the exercise and all related workout data permanently. This action cannot be undone.
+              <div className="mt-2 rounded-lg border border-red-400/30 bg-red-500/5 px-3 py-2 text-xs text-red-200">
+                All logged sets for this exercise will be deleted.
+              </div>
+            </>
+          }
+          onCancel={() => setPendingExerciseDelete(null)}
+          confirmButton={
+            <GradientButton
+              label={isSavingExercise ? "Deleting..." : "Delete Permanently"}
+              tone="danger"
+              onClick={() => void confirmDeleteExercise()}
+              disabled={isSavingExercise}
+            />
+          }
+        />
+      )}
+
+      {pendingMuscleGroupRename && (
+        <MuscleGroupRenameModal
+          muscleGroup={pendingMuscleGroupRename}
+          isBusy={isSavingExercise}
+          onCancel={() => setPendingMuscleGroupRename(null)}
+          onConfirm={(newName) => void confirmRenameMuscleGroup(newName)}
+        />
+      )}
+
+      {pendingMuscleGroupMove && (
+        <MuscleGroupMoveModal
+          muscleGroup={pendingMuscleGroupMove}
+          currentSplit={split}
+          isBusy={isSavingExercise}
+          onCancel={() => setPendingMuscleGroupMove(null)}
+          onConfirm={(targetSplit) => void confirmMoveMuscleGroup(targetSplit)}
         />
       )}
 

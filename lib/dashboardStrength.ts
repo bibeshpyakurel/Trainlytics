@@ -106,11 +106,12 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 export function computeRepMultiplier(reps: number): number {
-  if (reps >= 1 && reps <= 3) return 0.8;
-  if (reps >= 4 && reps <= 6) return 1;
-  if (reps >= 7 && reps <= 9) return 1.15;
-  if (reps >= 10 && reps <= 12) return 1.05;
-  return 1;
+  // Weight is the primary driver; reps add a 1%/rep bonus only within the 5-9 target range.
+  if (reps >= 1 && reps <= 3) return 0.85;
+  if (reps === 4) return 0.93;
+  if (reps >= 5 && reps <= 9) return 1.0 + (reps - 5) * 0.01; // 1.00 – 1.04
+  if (reps >= 10 && reps <= 12) return 0.95;
+  return 0.85;
 }
 
 export function computeSetStrengthScore(weight: number, reps: number): number {
@@ -118,7 +119,7 @@ export function computeSetStrengthScore(weight: number, reps: number): number {
     return 0;
   }
 
-  return weight * reps * computeRepMultiplier(reps);
+  return weight * computeRepMultiplier(reps);
 }
 
 export function computeSetStrength(weight_lb: number, reps: number): number {
@@ -143,7 +144,7 @@ export function computeSessionStrength(session: StrengthSessionInput): number {
   const set2Strength = computeSetStrengthFromInput(session.set2);
 
   if (set1Strength != null && set2Strength != null) {
-    return set1Strength * 0.4 + set2Strength * 0.6;
+    return set1Strength * 0.5 + set2Strength * 0.5;
   }
   if (set1Strength != null) return set1Strength;
   if (set2Strength != null) return set2Strength;
@@ -319,7 +320,7 @@ export function computeSessionStrengthByExerciseDate(rows: StrengthSetLog[]): Se
     let sessionStrength = 0;
 
     if (value.set1Score != null && value.set2Score != null) {
-      sessionStrength = value.set1Score * 0.4 + value.set2Score * 0.6;
+      sessionStrength = value.set1Score * 0.5 + value.set2Score * 0.5;
     } else if (value.set1Score != null) {
       sessionStrength = value.set1Score;
     } else if (value.set2Score != null) {
