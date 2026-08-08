@@ -3,6 +3,7 @@
 import { useState } from "react";
 import GradientButton from "@/shared/ui/GradientButton";
 import type { Exercise } from "@/features/log/types";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 type ExerciseRenameModalProps = {
   exercise: Exercise;
@@ -16,8 +17,8 @@ export default function ExerciseRenameModal({ exercise, isBusy, onCancel, onConf
   const trimmed = name.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+    <ModalSheet>
+      <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Rename Exercise</p>
         <h3 className="mt-2 text-xl font-semibold text-white">Rename &ldquo;{exercise.name}&rdquo;</h3>
         <input
@@ -45,6 +46,6 @@ export default function ExerciseRenameModal({ exercise, isBusy, onCancel, onConf
           />
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

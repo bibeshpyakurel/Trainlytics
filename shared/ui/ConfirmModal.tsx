@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 type ConfirmModalProps = {
   titleTag?: string;
@@ -20,8 +21,8 @@ export default function ConfirmModal({
   confirmButton,
 }: ConfirmModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+    <ModalSheet>
+      <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
         {titleTag && <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">{titleTag}</p>}
         <h3 className="mt-2 text-xl font-semibold text-white">{title}</h3>
         {description && <div className="mt-2 text-sm text-zinc-300">{description}</div>}
@@ -38,6 +39,6 @@ export default function ConfirmModal({
           {confirmButton}
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

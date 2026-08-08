@@ -19,7 +19,7 @@ export type DashboardLoadResult =
   | { status: "unauthenticated" }
   | { status: "error"; message: string };
 
-export type DashboardChartWindow = "90d" | "180d" | "all";
+export type DashboardChartWindow = "30d" | "90d" | "180d" | "all";
 
 const DEFAULT_STRENGTH_AGGREGATION_MODE: StrengthAggregationMode = "sum";
 
@@ -52,6 +52,7 @@ type SplitSessionHistoryRow = { session_date: string; split: "push" | "pull" | "
 const SPLIT_ORDER: Array<SplitSessionHistoryRow["split"]> = ["push", "pull", "legs", "core"];
 
 export function getDashboardWindowStartIso(window: DashboardChartWindow): string | null {
+  if (window === "30d") return getLocalIsoDateDaysAgo(29);
   if (window === "90d") return getLocalIsoDateDaysAgo(89);
   if (window === "180d") return getLocalIsoDateDaysAgo(179);
   return null;

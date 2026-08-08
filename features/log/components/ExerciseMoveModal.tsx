@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { TABLES } from "@/lib/dbNames";
 import GradientButton from "@/shared/ui/GradientButton";
 import type { Exercise, Split } from "@/features/log/types";
+import ModalSheet from "@/shared/ui/ModalSheet";
 
 type ExerciseMoveModalProps = {
   exercise: Exercise;
@@ -55,8 +56,8 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
   const isUnchanged = targetSplit === exercise.split && targetMuscleGroup === exercise.muscle_group;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+    <ModalSheet>
+      <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Move Exercise</p>
         <h3 className="mt-2 text-xl font-semibold text-white">Move &ldquo;{exercise.name}&rdquo;</h3>
 
@@ -132,6 +133,6 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
           />
         </div>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

@@ -9,6 +9,7 @@ import { APP_COPY } from "@/lib/appCopy";
 import { TABLES } from "@/lib/dbNames";
 import { ensureDefaultExercisesForUser } from "@/lib/defaultExercises";
 import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
+import ModalSheet from "@/shared/ui/ModalSheet";
 import { ROUTES, getDefaultSignedInRoute, getSafeProtectedNextRoute } from "@/lib/routes";
 import { STORAGE_KEYS } from "@/lib/preferences";
 import { reportClientError } from "@/lib/monitoringClient";
@@ -456,8 +457,8 @@ export default function SignUpPage() {
       </div>
 
       {verificationEmail && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/75 px-6 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-700/80 bg-zinc-900/95 p-5 shadow-2xl">
+        <ModalSheet backdropClassName="bg-zinc-950/75">
+          <div className="w-full max-w-md rounded-t-2xl border border-zinc-700/80 bg-zinc-900/95 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-sm font-semibold text-zinc-100">Verify your email with OTP</p>
             <p className="mt-1 text-xs text-zinc-400">
               Enter the code sent to <span className="font-semibold text-zinc-200">{verificationEmail}</span>.
@@ -493,7 +494,7 @@ export default function SignUpPage() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
     </div>
   );

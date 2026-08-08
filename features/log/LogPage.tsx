@@ -21,7 +21,6 @@ import DurationSetRow from "@/features/log/components/DurationSetRow";
 import FeedbackOverlay from "@/features/log/components/overlays/FeedbackOverlay";
 import SavedWorkoutOverlay from "@/features/log/components/overlays/SavedWorkoutOverlay";
 import ExportFlowModal from "@/features/log/components/ExportFlowModal";
-import SortableExerciseGroup from "@/features/log/components/SortableExerciseGroup";
 import ExerciseNoteModal from "@/features/log/components/ExerciseNoteModal";
 import ExerciseMoveModal from "@/features/log/components/ExerciseMoveModal";
 import ExerciseRenameModal from "@/features/log/components/ExerciseRenameModal";
@@ -36,7 +35,6 @@ import {
   moveMuscleGroupToSplit,
   renameManagedExercise,
   renameMuscleGroup,
-  reorderExercisesInGroup,
   updateExerciseMemo,
   type ExerciseDraft,
 } from "@/lib/exerciseManagement";
@@ -46,6 +44,7 @@ import ConfirmModal from "@/shared/ui/ConfirmModal";
 import GradientButton from "@/shared/ui/GradientButton";
 import OverflowMenu from "@/shared/ui/OverflowMenu";
 import ArchiveWithReplacementModal from "@/shared/ui/ArchiveWithReplacementModal";
+import ModalSheet from "@/shared/ui/ModalSheet";
 import type {
   DurationSet,
   Exercise,
@@ -122,10 +121,7 @@ export default function LogWorkoutPage() {
   }
 
   function sortExercisesForDisplay(items: Exercise[]) {
-    return [...items].sort((a, b) => {
-      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-      return a.name.localeCompare(b.name);
-    });
+    return [...items].sort((a, b) => a.name.localeCompare(b.name));
   }
   const isCurrentDate = date === today;
   const isGlobalBusy = busyAction !== null;
@@ -166,10 +162,7 @@ export default function LogWorkoutPage() {
 
     return Array.from(map.entries())
       .map(([groupName, items]) => {
-        const sortedItems = [...items].sort((a, b) => {
-          if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-          return a.name.localeCompare(b.name);
-        });
+        const sortedItems = [...items].sort((a, b) => a.name.localeCompare(b.name));
 
         return [groupName, sortedItems] as const;
       })
@@ -450,19 +443,6 @@ export default function LogWorkoutPage() {
         current.map((ex) => ex.id === target.id ? { ...ex, memo: target.memo } : ex)
       );
     }
-  }
-
-  async function handleReorderExercises(orderedIds: string[]) {
-    setExercises((current) =>
-      current.map((ex) => {
-        const newIndex = orderedIds.indexOf(ex.id);
-        return newIndex === -1 ? ex : { ...ex, sort_order: newIndex + 1 };
-      })
-    );
-    const userId = await requireUserId();
-    if (!userId) return;
-    const result = await reorderExercisesInGroup(userId, orderedIds);
-    if (!result.ok) setMsg(`Failed saving exercise order: ${result.message}`);
   }
 
   async function confirmMoveMuscleGroup(targetSplit: Split) {
@@ -1273,12 +1253,9 @@ export default function LogWorkoutPage() {
               </div>
 
               <div className="mt-4">
-                <SortableExerciseGroup
-                  exercises={list}
-                  disabled={isSavingExercise || isGlobalBusy || savingSetKey != null}
-                  onReorder={(orderedIds) => void handleReorderExercises(orderedIds)}
-                  renderExercise={(ex) => (
-                    <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-4">
+                <div className="space-y-3">
+                  {list.map((ex) => (
+                    <div key={ex.id} className="rounded-2xl border border-zinc-700/70 bg-zinc-950/60 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="font-medium text-zinc-100">{ex.name}</div>
@@ -1371,8 +1348,8 @@ export default function LogWorkoutPage() {
                         </div>
                       )}
                     </div>
-                  )}
-                />
+                  ))}
+                </div>
               </div>
             </div>
           ))}
@@ -1644,8 +1621,8 @@ export default function LogWorkoutPage() {
       )}
 
       {pendingSessionEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+        <ModalSheet>
+          <div className="w-full max-w-md rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Edit Session Date</p>
             <h3 className="mt-2 text-xl font-semibold text-white">Update workout date</h3>
             <p className="mt-2 text-sm text-zinc-300">
@@ -1690,12 +1667,12 @@ export default function LogWorkoutPage() {
               />
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
 
       {pendingSessionSummary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+        <ModalSheet>
+          <div className="w-full max-w-2xl rounded-t-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl sm:rounded-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">Session Summary</p>
             <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
               <h3 className="text-xl font-semibold text-white">
@@ -1775,7 +1752,7 @@ export default function LogWorkoutPage() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalSheet>
       )}
 
       {savedWorkoutOverlay && (
