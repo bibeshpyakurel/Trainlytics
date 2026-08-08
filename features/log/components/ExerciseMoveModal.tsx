@@ -42,10 +42,31 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
         grouped[s] = Array.from(set).sort();
       }
       setMuscleGroupsBySplit(grouped);
+
+      const initialGroups = grouped[exercise.split] ?? [];
+      if (initialGroups.includes(exercise.muscle_group)) {
+        setTargetMuscleGroup(exercise.muscle_group);
+      } else if (initialGroups.length > 0) {
+        setTargetMuscleGroup(initialGroups[0]!);
+      } else {
+        setTargetMuscleGroup("");
+      }
+
       setLoadingGroups(false);
     }
     void fetchGroups();
   }, [userId]);
+
+  useEffect(() => {
+    const groups = muscleGroupsBySplit[targetSplit] ?? [];
+    if (groups.includes(exercise.muscle_group)) {
+      setTargetMuscleGroup(exercise.muscle_group);
+    } else if (groups.length > 0) {
+      setTargetMuscleGroup(groups[0]!);
+    } else {
+      setTargetMuscleGroup("");
+    }
+  }, [targetSplit, muscleGroupsBySplit, exercise.muscle_group]);
 
   const groupOptions = muscleGroupsBySplit[targetSplit] ?? [];
   const defaultMuscleGroup = groupOptions.includes(exercise.muscle_group)
@@ -71,10 +92,7 @@ export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, 
                   <button
                     key={s}
                     type="button"
-                    onClick={() => {
-                      setTargetSplit(s);
-                      setMuscleGroupOverride(null);
-                    }}
+                    onClick={() => setTargetSplit(s)}
                     className={`rounded-lg border px-3 py-2 text-sm font-semibold capitalize transition ${
                       targetSplit === s
                         ? "border-amber-300/70 bg-amber-400/10 text-amber-200"
