@@ -8,15 +8,39 @@ export type ReleaseNote = {
  * Bump this whenever a new set of notes ships — the modal reappears for every
  * user whose stored "seen" value no longer matches.
  */
-export const CURRENT_RELEASE_ID = "2026-08-07";
-export const CURRENT_RELEASE_LABEL = "August 7, 2026";
+export const CURRENT_RELEASE_ID = "2026-08-09";
+export const CURRENT_RELEASE_LABEL = "August 9, 2026";
 
 export const CURRENT_RELEASE_NOTES: ReleaseNote[] = [
+  {
+    icon: "🗓️",
+    title: "Train the way you actually train",
+    description:
+      "Push, pull, legs and core are just a starting point now. Rename them, reorder them, or build your own days from Profile → Training Days.",
+  },
+  {
+    icon: "🎚️",
+    title: "Your own number of sets",
+    description:
+      "Every exercise used to open with exactly two sets. Use Add Set or Remove Set in the ⋮ menu and it remembers, so next session starts where you left it.",
+  },
+  {
+    icon: "📥",
+    title: "Bring in past workouts",
+    description:
+      "Tap Add Workout on the log page to enter an old session with dropdowns, or paste it straight from your notes app. Nothing saves until you check the summary.",
+  },
+  {
+    icon: "🆕",
+    title: "Set things up your way from day one",
+    description:
+      "New accounts now choose their training days, exercises and starting sets up front — or take the standard setup and change it later.",
+  },
   {
     icon: "⋮",
     title: "Action menus everywhere",
     description:
-      "Every exercise row and muscle group header now has a ⋮ menu — export, rename, move, archive, or delete without leaving the page.",
+      "Every exercise row and muscle group header has a ⋮ menu — export, rename, move, archive, add sets, or delete without leaving the page.",
   },
   {
     icon: "📝",
@@ -28,13 +52,13 @@ export const CURRENT_RELEASE_NOTES: ReleaseNote[] = [
     icon: "📈",
     title: "Pinned strength charts",
     description:
-      "The dashboard now tracks your top 6 exercises automatically, and you can pick exactly which ones stay pinned.",
+      "The dashboard tracks your top 6 exercises automatically, and you can pick exactly which ones stay pinned.",
   },
   {
     icon: "🎯",
-    title: "Sharper chart scaling",
+    title: "A tighter dashboard view",
     description:
-      "Each chart scales its own axis to the data it shows, so small week-to-week changes are actually visible.",
+      "Charts now open on the last 30 days, with 90, 180 and all-time a tap away. Each chart also scales its own axis, so small changes are actually visible.",
   },
   {
     icon: "💪",
@@ -52,18 +76,12 @@ export const CURRENT_RELEASE_NOTES: ReleaseNote[] = [
     icon: "📱",
     title: "Built for your phone",
     description:
-      "A bottom tab bar replaces the old top nav on mobile, so every screen is reachable one-handed.",
+      "A bottom tab bar on mobile, and every dialog now slides up as a sheet with bigger tap targets instead of floating in the middle of the screen.",
   },
   {
     icon: "🗂️",
-    title: "Cleaner archive",
+    title: "Cleaner exercise list",
     description:
-      "Archived exercises collapse into compact rows you can expand, restore, or delete for good.",
-  },
-  {
-    icon: "🏷️",
-    title: "Rename & move muscle groups",
-    description:
-      "Rename a muscle group or shift it to another split, and every exercise inside it follows along.",
+      "Exercises sit in alphabetical order within each muscle group, and archived ones collapse into compact rows you can expand, restore, or delete for good.",
   },
 ];
