@@ -6,6 +6,9 @@ type MenuItem = {
   label: string;
   onClick: () => void;
   variant?: "danger";
+  disabled?: boolean;
+  /** Shown under the label — e.g. why an item is unavailable. */
+  hint?: string;
 };
 
 type OverflowMenuProps = {
@@ -45,15 +48,17 @@ export default function OverflowMenu({ items, disabled }: OverflowMenuProps) {
             <button
               key={item.label}
               type="button"
+              disabled={item.disabled}
               onClick={() => {
                 setOpen(false);
                 item.onClick();
               }}
-              className={`w-full px-4 py-2 text-left text-sm transition hover:bg-zinc-800 ${
+              className={`flex min-h-11 w-full flex-col justify-center px-4 py-2 text-left text-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${
                 item.variant === "danger" ? "text-red-300" : "text-zinc-100"
               }`}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.hint && <span className="text-[11px] text-zinc-500">{item.hint}</span>}
             </button>
           ))}
         </div>

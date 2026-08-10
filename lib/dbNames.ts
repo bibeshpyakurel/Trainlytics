@@ -5,6 +5,7 @@ export const TABLES = {
   metabolicActivityLogs: "metabolic_activity_logs",
   exercises: "exercises",
   profiles: "profiles",
+  userSplits: "user_splits",
   workoutSessions: "workout_sessions",
   workoutSets: "workout_sets",
 } as const;

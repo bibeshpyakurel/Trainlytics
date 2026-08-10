@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { TABLES } from "@/lib/dbNames";
 import GradientButton from "@/shared/ui/GradientButton";
+import { useUserSplits } from "@/features/log/useUserSplits";
 import type { Exercise, Split } from "@/features/log/types";
 import ModalSheet from "@/shared/ui/ModalSheet";
 
@@ -15,9 +16,9 @@ type ExerciseMoveModalProps = {
   onConfirm: (targetSplit: Split, targetMuscleGroup: string) => void;
 };
 
-const SPLITS: Split[] = ["push", "pull", "legs", "core"];
 
 export default function ExerciseMoveModal({ exercise, userId, isBusy, onCancel, onConfirm }: ExerciseMoveModalProps) {
+  const SPLITS = useUserSplits(userId);
   const [targetSplit, setTargetSplit] = useState<Split>(exercise.split);
   // null means "follow the default for the current split"; set once the user picks explicitly.
   const [muscleGroupOverride, setMuscleGroupOverride] = useState<string | null>(null);

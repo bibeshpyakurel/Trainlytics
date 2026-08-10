@@ -74,7 +74,7 @@ export type InsightsAiContext = {
     workoutSessions: Array<{
       sessionId: string;
       date: string;
-      split: "push" | "pull" | "legs" | "core";
+      split: string;
       exercises: Array<{
         name: string;
         muscleGroup: string | null;

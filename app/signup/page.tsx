@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { APP_COPY } from "@/lib/appCopy";
 import { TABLES } from "@/lib/dbNames";
-import { ensureDefaultExercisesForUser } from "@/lib/defaultExercises";
 import { INPUT_BASE_CLASS } from "@/lib/uiClasses";
 import ModalSheet from "@/shared/ui/ModalSheet";
 import { ROUTES, getDefaultSignedInRoute, getSafeProtectedNextRoute } from "@/lib/routes";
@@ -161,12 +160,6 @@ export default function SignUpPage() {
         return;
       }
 
-      const seedError = await ensureDefaultExercisesForUser(userId);
-      if (seedError) {
-        setLoading(false);
-        showError(`Account created, but default exercises could not be prepared: ${seedError}`);
-        return;
-      }
     }
 
     setLoading(false);
@@ -239,12 +232,6 @@ export default function SignUpPage() {
         return;
       }
 
-      const seedError = await ensureDefaultExercisesForUser(sessionUserId);
-      if (seedError) {
-        setLoading(false);
-        showError(`Email verified, but default exercises could not be prepared: ${seedError}`);
-        return;
-      }
     }
 
     setLoading(false);

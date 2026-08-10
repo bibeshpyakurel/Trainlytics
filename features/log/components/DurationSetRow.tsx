@@ -2,7 +2,7 @@ import { formatModified } from "@/features/log/formatters";
 import PreviousPerformancePill from "@/features/log/components/PreviousPerformancePill";
 
 type DurationSetRowProps = {
-  setIndex: 0 | 1;
+  setIndex: number;
   row: { seconds: string } | undefined;
   isCurrentDate: boolean;
   loading: boolean;

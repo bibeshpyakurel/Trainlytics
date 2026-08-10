@@ -8,14 +8,14 @@ import ModalSheet from "@/shared/ui/ModalSheet";
 type MuscleGroupMoveModalProps = {
   muscleGroup: string;
   currentSplit: Split;
+  /** The user's training days, in their chosen order. */
+  splits: Split[];
   isBusy: boolean;
   onCancel: () => void;
   onConfirm: (targetSplit: Split) => void;
 };
 
-const SPLITS: Split[] = ["push", "pull", "legs", "core"];
-
-export default function MuscleGroupMoveModal({ muscleGroup, currentSplit, isBusy, onCancel, onConfirm }: MuscleGroupMoveModalProps) {
+export default function MuscleGroupMoveModal({ muscleGroup, currentSplit, splits, isBusy, onCancel, onConfirm }: MuscleGroupMoveModalProps) {
   const [targetSplit, setTargetSplit] = useState<Split | null>(null);
 
   return (
@@ -31,7 +31,7 @@ export default function MuscleGroupMoveModal({ muscleGroup, currentSplit, isBusy
         <div className="mt-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">Target session</p>
           <div className="grid grid-cols-3 gap-2">
-            {SPLITS.filter((s) => s !== currentSplit).map((s) => (
+            {splits.filter((s) => s !== currentSplit).map((s) => (
               <button
                 key={s}
                 type="button"

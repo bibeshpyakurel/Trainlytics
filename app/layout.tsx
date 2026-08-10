@@ -5,6 +5,7 @@ import { STORAGE_KEYS } from "@/lib/preferences";
 import GlobalErrorReporter from "./GlobalErrorReporter";
 import SessionActivityGuard from "./SessionActivityGuard";
 import WhatsNewModal from "./WhatsNewModal";
+import OnboardingWizard from "./OnboardingWizard";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <GlobalErrorReporter />
         <SessionActivityGuard />
         <AppNav />
+        <OnboardingWizard />
         <WhatsNewModal />
 
         <main>{children}</main>

@@ -1,6 +1,11 @@
 import type { Unit } from "@/lib/convertWeight";
 
-export type Split = "push" | "pull" | "legs" | "core";
+/**
+ * A training day. Users define their own, so this is free text rather than a
+ * fixed union — see db/migrations/custom_splits_and_default_sets.sql.
+ * DEFAULT_SPLITS holds the push/pull/legs/core starter set.
+ */
+export type Split = string;
 export type MetricType = "WEIGHTED_REPS" | "DURATION";
 
 export type Exercise = {
@@ -11,6 +16,8 @@ export type Exercise = {
   metric_type: MetricType;
   sort_order: number;
   is_active: boolean;
+  /** How many set rows this exercise opens with. Always at least 1. */
+  default_sets: number;
   replaced_by_exercise_id?: string | null;
   memo?: string | null;
 };
@@ -65,7 +72,7 @@ export type PendingSetDelete = {
   exerciseId: string;
   exerciseName: string;
   metricType: MetricType;
-  setIdx: 0 | 1;
+  setIdx: number;
 };
 
 export type PendingSessionEdit = {

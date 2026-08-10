@@ -2,7 +2,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { TABLES } from "@/lib/dbNames";
 import type { MetricType, Split } from "@/features/log/types";
 
-type DefaultExerciseSeed = {
+export type DefaultExerciseSeed = {
   name: string;
   split: Split;
   muscleGroup: string;
@@ -10,7 +10,7 @@ type DefaultExerciseSeed = {
   sortOrder: number;
 };
 
-const DEFAULT_EXERCISE_SEEDS: DefaultExerciseSeed[] = [
+export const DEFAULT_EXERCISE_SEEDS: DefaultExerciseSeed[] = [
   { name: "Incline Bench Press", split: "push", muscleGroup: "chest", metricType: "WEIGHTED_REPS", sortOrder: 1 },
   { name: "Triceps Push Down", split: "push", muscleGroup: "triceps", metricType: "WEIGHTED_REPS", sortOrder: 2 },
   { name: "Barbell Shoulder Press", split: "push", muscleGroup: "shoulders", metricType: "WEIGHTED_REPS", sortOrder: 3 },
@@ -72,4 +72,35 @@ export async function ensureDefaultExercisesForUser(userId: string): Promise<str
   }
 
   return null;
+}
+
+/**
+ * Creates exactly the exercises the user chose during onboarding. Unlike
+ * ensureDefaultExercisesForUser this makes no assumptions about the catalog —
+ * the caller decides what goes in.
+ */
+export async function seedChosenExercisesForUser(
+  userId: string,
+  seeds: Array<{ name: string; split: Split; muscleGroup: string; metricType: MetricType; defaultSets: number }>
+): Promise<string | null> {
+  if (seeds.length === 0) return null;
+
+  const sortOrderBySplit = new Map<string, number>();
+  const payload = seeds.map((row) => {
+    const next = (sortOrderBySplit.get(row.split) ?? 0) + 1;
+    sortOrderBySplit.set(row.split, next);
+    return {
+      user_id: userId,
+      name: row.name,
+      split: row.split,
+      muscle_group: row.muscleGroup,
+      metric_type: row.metricType,
+      sort_order: next,
+      is_active: true,
+      default_sets: Math.max(1, Math.round(row.defaultSets)),
+    };
+  });
+
+  const { error } = await supabase.from(TABLES.exercises).insert(payload);
+  return error ? error.message : null;
 }
