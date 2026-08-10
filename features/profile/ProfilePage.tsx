@@ -7,6 +7,7 @@ import SaveStatusOverlay from "@/features/profile/components/SaveStatusOverlay";
 import AvatarCropModal from "@/features/profile/components/AvatarCropModal";
 import DeleteAvatarConfirmModal from "@/features/profile/components/DeleteAvatarConfirmModal";
 import ExerciseLibrarySection from "@/features/profile/components/ExerciseLibrarySection";
+import TrainingSplitsSection from "@/features/profile/components/TrainingSplitsSection";
 import { STORAGE_KEYS, setStoredBoolean } from "@/lib/preferences";
 import { clearAccountScopedClientState } from "@/lib/accountScopedClientState";
 import { CLASS_GRADIENT_PRIMARY } from "@/lib/uiTokens";
@@ -943,6 +944,8 @@ export default function ProfilePage() {
               </label>
             </div>
           </section>
+
+          <TrainingSplitsSection userId={userId} disabled={isProfileBusy} onStatus={setMsg} />
 
           <ExerciseLibrarySection userId={userId} disabled={isProfileBusy} onStatus={setMsg} />
 

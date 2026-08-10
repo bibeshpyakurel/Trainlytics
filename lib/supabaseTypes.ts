@@ -150,6 +150,7 @@ export type Database = {
       exercises: {
         Row: {
           created_at: string;
+          default_sets: number;
           id: string;
           is_active: boolean;
           memo: string | null;
@@ -158,11 +159,12 @@ export type Database = {
           name: string;
           replaced_by_exercise_id: string | null;
           sort_order: number;
-          split: Database["public"]["Enums"]["split_type"];
+          split: string;
           user_id: string;
         };
         Insert: {
           created_at?: string;
+          default_sets?: number;
           id?: string;
           is_active?: boolean;
           memo?: string | null;
@@ -171,11 +173,12 @@ export type Database = {
           name: string;
           replaced_by_exercise_id?: string | null;
           sort_order?: number;
-          split: Database["public"]["Enums"]["split_type"];
+          split: string;
           user_id: string;
         };
         Update: {
           created_at?: string;
+          default_sets?: number;
           id?: string;
           is_active?: boolean;
           memo?: string | null;
@@ -184,7 +187,7 @@ export type Database = {
           name?: string;
           replaced_by_exercise_id?: string | null;
           sort_order?: number;
-          split?: Database["public"]["Enums"]["split_type"];
+          split?: string;
           user_id?: string;
         };
         Relationships: [
@@ -196,6 +199,30 @@ export type Database = {
             referencedColumns: ["id"];
           }
         ];
+      };
+      user_splits: {
+        Row: {
+          created_at: string;
+          id: string;
+          name: string;
+          sort_order: number;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          name: string;
+          sort_order?: number;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          name?: string;
+          sort_order?: number;
+          user_id?: string;
+        };
+        Relationships: [];
       };
       profiles: {
         Row: {
@@ -251,7 +278,7 @@ export type Database = {
           id: string;
           notes: string | null;
           session_date: string;
-          split: Database["public"]["Enums"]["split_type"];
+          split: string;
           user_id: string;
         };
         Insert: {
@@ -259,7 +286,7 @@ export type Database = {
           id?: string;
           notes?: string | null;
           session_date: string;
-          split: Database["public"]["Enums"]["split_type"];
+          split: string;
           user_id: string;
         };
         Update: {
@@ -267,7 +294,7 @@ export type Database = {
           id?: string;
           notes?: string | null;
           session_date?: string;
-          split?: Database["public"]["Enums"]["split_type"];
+          split?: string;
           user_id?: string;
         };
         Relationships: [];
@@ -322,7 +349,6 @@ export type Database = {
       exercise_metric_type: "WEIGHTED_REPS" | "DURATION";
       maintenance_method_type: "mifflin_st_jeor_activity_multiplier";
       profile_sex_type: "male" | "female" | "other";
-      split_type: "push" | "pull" | "legs" | "core";
       unit_type: "kg" | "lb";
     };
     CompositeTypes: Record<string, never>;

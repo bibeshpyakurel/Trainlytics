@@ -3,7 +3,7 @@ import { formatModified } from "@/features/log/formatters";
 import PreviousPerformancePill from "@/features/log/components/PreviousPerformancePill";
 
 type WeightedSetRowProps = {
-  setIndex: 0 | 1;
+  setIndex: number;
   exerciseId: string;
   row: { reps: string; weight: string; unit: Unit } | undefined;
   isCurrentDate: boolean;

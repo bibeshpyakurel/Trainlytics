@@ -26,7 +26,16 @@ import ExerciseMoveModal from "@/features/log/components/ExerciseMoveModal";
 import ExerciseRenameModal from "@/features/log/components/ExerciseRenameModal";
 import MuscleGroupMoveModal from "@/features/log/components/MuscleGroupMoveModal";
 import MuscleGroupRenameModal from "@/features/log/components/MuscleGroupRenameModal";
-import { createDefaultDurationPair, createDefaultWeightedPair, LOG_MESSAGES } from "@/features/log/constants";
+import {
+  clampSetCount,
+  createDefaultDurationSets,
+  createDefaultWeightedSets,
+  createEmptyDurationSet,
+  createEmptyWeightedSet,
+  LOG_MESSAGES,
+  MAX_SETS_PER_EXERCISE,
+  MIN_SETS_PER_EXERCISE,
+} from "@/features/log/constants";
 import {
   archiveManagedExercise,
   createManagedExercise,
@@ -36,6 +45,7 @@ import {
   renameManagedExercise,
   renameMuscleGroup,
   updateExerciseMemo,
+  updateExerciseDefaultSets,
   type ExerciseDraft,
 } from "@/lib/exerciseManagement";
 import { type WorkoutExportScope } from "@/lib/workoutExport";
@@ -45,6 +55,8 @@ import GradientButton from "@/shared/ui/GradientButton";
 import OverflowMenu from "@/shared/ui/OverflowMenu";
 import ArchiveWithReplacementModal from "@/shared/ui/ArchiveWithReplacementModal";
 import ModalSheet from "@/shared/ui/ModalSheet";
+import AddWorkoutsModal from "@/features/log/components/AddWorkoutsModal";
+import { DEFAULT_SPLIT_NAMES, ensureUserSplits, type UserSplit } from "@/lib/splits";
 import type {
   DurationSet,
   Exercise,
@@ -111,6 +123,11 @@ export default function LogWorkoutPage() {
     sessionDate: string;
     setCount: number;
   } | null>(null);
+  const [showAddWorkouts, setShowAddWorkouts] = useState(false);
+  const [userSplits, setUserSplits] = useState<UserSplit[]>([]);
+  // Fall back to the starter set until the user's own splits have loaded.
+  const availableSplits: Split[] =
+    userSplits.length > 0 ? userSplits.map((entry) => entry.name) : [...DEFAULT_SPLIT_NAMES];
   function toDisplayLabel(value: string) {
     return value
       .trim()
@@ -179,7 +196,7 @@ export default function LogWorkoutPage() {
   const hasAtLeastOneCompleteSet = useMemo(() => {
     for (const ex of exercises) {
       if (ex.metric_type === "WEIGHTED_REPS") {
-        const sets = weightedForm[ex.id] ?? createDefaultWeightedPair();
+        const sets = weightedForm[ex.id] ?? createDefaultWeightedSets(ex.default_sets);
 
         for (const set of sets) {
           const repsText = set.reps.trim();
@@ -193,7 +210,7 @@ export default function LogWorkoutPage() {
           }
         }
       } else {
-        const sets = durationForm[ex.id] ?? createDefaultDurationPair();
+        const sets = durationForm[ex.id] ?? createDefaultDurationSets(ex.default_sets);
         for (const set of sets) {
           const secText = set.seconds.trim();
           if (!secText) continue;
@@ -210,17 +227,21 @@ export default function LogWorkoutPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const requestedSplit = new URLSearchParams(window.location.search).get("split");
-    if (requestedSplit !== "push" && requestedSplit !== "pull" && requestedSplit !== "legs" && requestedSplit !== "core") {
-      return;
-    }
+    const requestedSplit = new URLSearchParams(window.location.search).get("split")?.trim().toLowerCase();
+    // Splits are user-defined, so any non-empty value is accepted here.
+    if (!requestedSplit) return;
     setSplit((current) => (current === requestedSplit ? current : requestedSplit));
   }, []);
 
   useEffect(() => {
-    getCurrentSessionUser().then((authState) => {
-      if (authState.status === "ok") setLoggedInUserId(authState.userId);
-    });
+    (async () => {
+      const authState = await getCurrentSessionUser();
+      if (authState.status !== "ok") return;
+
+      setLoggedInUserId(authState.userId);
+      const splitsResult = await ensureUserSplits(authState.userId);
+      if (splitsResult.ok) setUserSplits(splitsResult.splits);
+    })();
   }, []);
 
   useEffect(() => {
@@ -247,10 +268,10 @@ export default function LogWorkoutPage() {
     };
   }, [msg]);
 
-  function updateWeighted(exId: string, setIdx: 0 | 1, patch: Partial<WeightedSet>) {
+  function updateWeighted(exId: string, setIdx: number, patch: Partial<WeightedSet>) {
     setWeightedForm((prev) => {
-      const cur = prev[exId] ?? createDefaultWeightedPair();
-      const next: [WeightedSet, WeightedSet] = [
+      const cur = prev[exId] ?? createDefaultWeightedSets(2);
+      const next: WeightedSet[] = [
         { ...cur[0] },
         { ...cur[1] },
       ];
@@ -259,10 +280,51 @@ export default function LogWorkoutPage() {
     });
   }
 
-  function updateDuration(exId: string, setIdx: 0 | 1, seconds: string) {
+  function visibleSetCount(ex: Exercise) {
+    const rows = ex.metric_type === "WEIGHTED_REPS" ? weightedForm[ex.id] : durationForm[ex.id];
+    return rows?.length ?? clampSetCount(ex.default_sets);
+  }
+
+  /**
+   * Adds or removes a trailing set row and remembers the new count on the exercise,
+   * so the next session opens with the same number. Never goes below one — removing
+   * the last set means deleting the exercise instead.
+   */
+  async function changeSetCount(ex: Exercise, delta: number) {
+    const current = visibleSetCount(ex);
+    const next = clampSetCount(current + delta);
+    if (next === current) return;
+
+    if (ex.metric_type === "WEIGHTED_REPS") {
+      setWeightedForm((prev) => {
+        const cur = prev[ex.id] ?? createDefaultWeightedSets(current);
+        const grown = next > cur.length
+          ? [...cur, ...Array.from({ length: next - cur.length }, createEmptyWeightedSet)]
+          : cur.slice(0, next);
+        return { ...prev, [ex.id]: grown };
+      });
+    } else {
+      setDurationForm((prev) => {
+        const cur = prev[ex.id] ?? createDefaultDurationSets(current);
+        const grown = next > cur.length
+          ? [...cur, ...Array.from({ length: next - cur.length }, createEmptyDurationSet)]
+          : cur.slice(0, next);
+        return { ...prev, [ex.id]: grown };
+      });
+    }
+
+    setExercises((cur) => cur.map((item) => (item.id === ex.id ? { ...item, default_sets: next } : item)));
+
+    const userId = await requireUserId();
+    if (!userId) return;
+    const result = await updateExerciseDefaultSets(userId, ex.id, next);
+    if (!result.ok) setMsg(`Failed saving set count: ${result.message}`);
+  }
+
+  function updateDuration(exId: string, setIdx: number, seconds: string) {
     setDurationForm((prev) => {
-      const cur = prev[exId] ?? createDefaultDurationPair();
-      const next: [DurationSet, DurationSet] = [{ ...cur[0] }, { ...cur[1] }];
+      const cur = prev[exId] ?? createDefaultDurationSets(2);
+      const next: DurationSet[] = [{ ...cur[0] }, { ...cur[1] }];
       next[setIdx] = { seconds };
       return { ...prev, [exId]: next };
     });
@@ -298,13 +360,14 @@ export default function LogWorkoutPage() {
         sort_order: result.exercise.sort_order,
         is_active: true,
         replaced_by_exercise_id: null,
+        default_sets: result.exercise.default_sets ?? 2,
       };
 
       setExercises((current) => sortExercisesForDisplay([...current, createdExercise]));
       if (createdExercise.metric_type === "WEIGHTED_REPS") {
-        setWeightedForm((current) => ({ ...current, [createdExercise.id]: createDefaultWeightedPair() }));
+        setWeightedForm((current) => ({ ...current, [createdExercise.id]: createDefaultWeightedSets(createdExercise.default_sets ?? 2) }));
       } else {
-        setDurationForm((current) => ({ ...current, [createdExercise.id]: createDefaultDurationPair() }));
+        setDurationForm((current) => ({ ...current, [createdExercise.id]: createDefaultDurationSets(createdExercise.default_sets ?? 2) }));
       }
 
       resetExerciseCreator(split);
@@ -654,7 +717,7 @@ export default function LogWorkoutPage() {
     }
   }
 
-  async function saveSingleSet(ex: Exercise, setIdx: 0 | 1) {
+  async function saveSingleSet(ex: Exercise, setIdx: number) {
     if (!validateSessionDate()) return;
     if (isGlobalBusy || savingSetKey) return;
     const setNumber = setIdx + 1;
@@ -812,7 +875,7 @@ export default function LogWorkoutPage() {
     }
   }
 
-  function requestDeleteSingleSet(ex: Exercise, setIdx: 0 | 1) {
+  function requestDeleteSingleSet(ex: Exercise, setIdx: number) {
     setPendingSetDelete({
       exerciseId: ex.id,
       exerciseName: ex.name,
@@ -1106,14 +1169,14 @@ export default function LogWorkoutPage() {
       }
 
       if (target.sessionDate === date && target.split === split) {
-        const weightedDefaults: Record<string, [WeightedSet, WeightedSet]> = {};
-        const durationDefaults: Record<string, [DurationSet, DurationSet]> = {};
+        const weightedDefaults: Record<string, WeightedSet[]> = {};
+        const durationDefaults: Record<string, DurationSet[]> = {};
 
         for (const ex of exercises) {
           if (ex.metric_type === "WEIGHTED_REPS") {
-            weightedDefaults[ex.id] = createDefaultWeightedPair();
+            weightedDefaults[ex.id] = createDefaultWeightedSets(ex.default_sets);
           } else {
-            durationDefaults[ex.id] = createDefaultDurationPair();
+            durationDefaults[ex.id] = createDefaultDurationSets(ex.default_sets);
           }
         }
 
@@ -1166,7 +1229,7 @@ export default function LogWorkoutPage() {
             </div>
 
             <div className="flex w-full flex-wrap gap-2 rounded-xl border border-zinc-700/70 bg-zinc-950/60 p-1.5 sm:w-auto sm:flex-1">
-              {(["push", "pull", "legs", "core"] as Split[]).map((s) => (
+              {availableSplits.map((s) => (
                 <button
                   key={s}
                   onClick={() => setSplit(s)}
@@ -1198,13 +1261,22 @@ export default function LogWorkoutPage() {
                     : `No ${splitLabel} session logged yet. Start your first one today.`}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void requestScopeExport({ level: "category", split, label: `${splitLabel} Category` })}
-                className="rounded-md border border-sky-400/60 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10"
-              >
-                Export {splitLabel}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddWorkouts(true)}
+                  className="min-h-11 rounded-md border border-emerald-400/60 px-3 text-xs font-medium text-emerald-200 transition hover:bg-emerald-500/10 sm:min-h-0 sm:py-1.5"
+                >
+                  Add Workout
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void requestScopeExport({ level: "category", split, label: `${splitLabel} Category` })}
+                  className="min-h-11 rounded-md border border-sky-400/60 px-3 text-xs font-medium text-sky-200 transition hover:bg-sky-500/10 sm:min-h-0 sm:py-1.5"
+                >
+                  Export {splitLabel}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1279,6 +1351,21 @@ export default function LogWorkoutPage() {
                               onClick: () => setPendingExerciseNote(ex),
                             },
                             {
+                              label: "Add Set",
+                              onClick: () => void changeSetCount(ex, 1),
+                              disabled: visibleSetCount(ex) >= MAX_SETS_PER_EXERCISE,
+                              hint: `Currently ${visibleSetCount(ex)} set${visibleSetCount(ex) === 1 ? "" : "s"}`,
+                            },
+                            {
+                              label: "Remove Set",
+                              onClick: () => void changeSetCount(ex, -1),
+                              disabled: visibleSetCount(ex) <= MIN_SETS_PER_EXERCISE,
+                              hint:
+                                visibleSetCount(ex) <= MIN_SETS_PER_EXERCISE
+                                  ? "Delete the exercise instead"
+                                  : undefined,
+                            },
+                            {
                               label: "Archive",
                               onClick: () => setPendingExerciseArchive(ex),
                             },
@@ -1301,8 +1388,8 @@ export default function LogWorkoutPage() {
 
                       {ex.metric_type === "WEIGHTED_REPS" ? (
                         <div className="mt-3 grid gap-3">
-                          {[0, 1].map((i) => {
-                            const setIdx = i as 0 | 1;
+                          {Array.from({ length: visibleSetCount(ex) }, (_, i) => {
+                            const setIdx = i;
                             const row = weightedForm[ex.id]?.[setIdx];
                             const lastWeightedSet = lastWeightedSetByKey[makeSetKey(ex.id, setIdx + 1)];
                             return (
@@ -1326,8 +1413,8 @@ export default function LogWorkoutPage() {
                         </div>
                       ) : (
                         <div className="mt-3 grid gap-3">
-                          {[0, 1].map((i) => {
-                            const setIdx = i as 0 | 1;
+                          {Array.from({ length: visibleSetCount(ex) }, (_, i) => {
+                            const setIdx = i;
                             const row = durationForm[ex.id]?.[setIdx];
                             const lastDurationSet = lastDurationSetByKey[makeSetKey(ex.id, setIdx + 1)];
                             return (
@@ -1567,6 +1654,24 @@ export default function LogWorkoutPage() {
         />
       )}
 
+      {showAddWorkouts && loggedInUserId && (
+        <AddWorkoutsModal
+          userId={loggedInUserId}
+          defaultUnit={summaryUnit}
+          initialDate={date}
+          initialSplit={split}
+          onCancel={() => setShowAddWorkouts(false)}
+          onSaved={(sessionCount, setCount) => {
+            setShowAddWorkouts(false);
+            setMsg(
+              `Imported ${setCount} set${setCount === 1 ? "" : "s"} across ${sessionCount} session${sessionCount === 1 ? "" : "s"} ✅`
+            );
+            void loadLastSessions();
+            void loadRecentSessions();
+          }}
+        />
+      )}
+
       {pendingExerciseMove && loggedInUserId && (
         <ExerciseMoveModal
           exercise={pendingExerciseMove}
@@ -1614,6 +1719,7 @@ export default function LogWorkoutPage() {
         <MuscleGroupMoveModal
           muscleGroup={pendingMuscleGroupMove}
           currentSplit={split}
+          splits={availableSplits}
           isBusy={isSavingExercise}
           onCancel={() => setPendingMuscleGroupMove(null)}
           onConfirm={(targetSplit) => void confirmMoveMuscleGroup(targetSplit)}

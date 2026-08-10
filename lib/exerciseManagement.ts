@@ -15,13 +15,22 @@ export type ExerciseDraft = {
   split: Split;
   muscleGroup: string;
   metricType: MetricType;
+  /** How many set rows this exercise opens with. Defaults to 2, never below 1. */
+  defaultSets?: number;
 };
 
 type ReplacementLinkExercise = Pick<ExerciseRow, "id" | "split" | "metric_type" | "is_active">;
 
+/** Ordering hint only — user-defined splits fall after these, alphabetically. */
 const SPLIT_ORDER: Split[] = ["push", "pull", "legs", "core"];
 const NAME_MAX_LENGTH = 80;
 const MUSCLE_GROUP_MAX_LENGTH = 40;
+const SPLIT_MAX_LENGTH = 40;
+
+function splitRank(split: Split) {
+  const index = SPLIT_ORDER.indexOf(split);
+  return index === -1 ? SPLIT_ORDER.length : index;
+}
 
 async function loadUserExerciseNameIndex(userId: string) {
   const { data, error } = await supabase
@@ -92,8 +101,13 @@ export function validateExerciseDraft(draft: ExerciseDraft) {
     };
   }
 
-  if (!SPLIT_ORDER.includes(draft.split)) {
-    return { ok: false as const, message: "Split is invalid." };
+  // Splits are user-defined free text now, so only shape is checked here.
+  const split = draft.split.trim().toLowerCase();
+  if (!split) {
+    return { ok: false as const, message: "Split is required." };
+  }
+  if (split.length > SPLIT_MAX_LENGTH) {
+    return { ok: false as const, message: `Split must be ${SPLIT_MAX_LENGTH} characters or fewer.` };
   }
 
   if (draft.metricType !== "WEIGHTED_REPS" && draft.metricType !== "DURATION") {
@@ -104,7 +118,7 @@ export function validateExerciseDraft(draft: ExerciseDraft) {
     ok: true as const,
     value: {
       name,
-      split: draft.split,
+      split,
       muscleGroup,
       metricType: draft.metricType,
     },
@@ -152,7 +166,7 @@ export function validateArchivedExerciseReplacementLink(input: {
 export async function loadManagedExercises(userId: string) {
   const { data: exerciseRows, error: exerciseError } = await supabase
     .from(TABLES.exercises)
-    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,created_at")
+    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,created_at,default_sets")
     .eq("user_id", userId);
 
   if (exerciseError) {
@@ -187,8 +201,9 @@ export async function loadManagedExercises(userId: string) {
     }))
     .sort((a, b) => {
       if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
-      const splitDiff = SPLIT_ORDER.indexOf(a.split) - SPLIT_ORDER.indexOf(b.split);
+      const splitDiff = splitRank(a.split) - splitRank(b.split);
       if (splitDiff !== 0) return splitDiff;
+      if (a.split !== b.split) return a.split.localeCompare(b.split);
       return a.name.localeCompare(b.name);
     });
 
@@ -227,8 +242,9 @@ export async function createManagedExercise(userId: string, draft: ExerciseDraft
       sort_order: sortOrderResult.sortOrder,
       is_active: true,
       replaced_by_exercise_id: null,
+      default_sets: Math.max(1, Math.round(draft.defaultSets ?? 2)),
     })
-    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,created_at")
+    .select("id,user_id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,created_at,default_sets")
     .single();
 
   if (error || !data) {
@@ -670,4 +686,18 @@ export async function updateExerciseMemo(
   }
 
   return { ok: true as const };
+}
+
+/** Persists how many set rows an exercise opens with. Never drops below one. */
+export async function updateExerciseDefaultSets(userId: string, exerciseId: string, count: number) {
+  const nextCount = Math.max(1, Math.round(count));
+
+  const { error } = await supabase
+    .from(TABLES.exercises)
+    .update({ default_sets: nextCount })
+    .eq("id", exerciseId)
+    .eq("user_id", userId);
+
+  if (error) return { ok: false as const, message: error.message };
+  return { ok: true as const, defaultSets: nextCount };
 }

@@ -3,7 +3,6 @@ import type { Unit } from "@/lib/convertWeight";
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentSessionUser } from "@/lib/authSession";
 import { TABLES } from "@/lib/dbNames";
-import { ensureDefaultExercisesForUser } from "@/lib/defaultExercises";
 import { getDaysAgo, makeSetKey } from "@/features/log/formatters";
 import { createRequestVersionTracker } from "@/features/log/requestVersion";
 import type {
@@ -45,8 +44,8 @@ export function useLogSessionData({
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [lastSessionBySplit, setLastSessionBySplit] = useState<Partial<Record<Split, LastSessionInfo>>>({});
   const [recentSessions, setRecentSessions] = useState<RecentWorkoutSession[]>([]);
-  const [weightedForm, setWeightedForm] = useState<Record<string, [WeightedSet, WeightedSet]>>({});
-  const [durationForm, setDurationForm] = useState<Record<string, [DurationSet, DurationSet]>>({});
+  const [weightedForm, setWeightedForm] = useState<Record<string, WeightedSet[]>>({});
+  const [durationForm, setDurationForm] = useState<Record<string, DurationSet[]>>({});
   const [lastModifiedBySetKey, setLastModifiedBySetKey] = useState<Record<string, string>>({});
   const [lastWeightedSetByKey, setLastWeightedSetByKey] = useState<
     Record<string, LastWeightedSetSnapshot>
@@ -150,17 +149,11 @@ export function useLogSessionData({
       }
 
       const userId = authState.userId;
-      const seedError = await ensureDefaultExercisesForUser(userId);
-      if (isStale()) return;
-      if (seedError) {
-        setMsg(`Error preparing default exercises: ${seedError}`);
-        setExercises([]);
-        return;
-      }
+      // No auto-seeding: OnboardingWizard decides what a new user starts with.
 
       const { data, error } = await supabase
         .from(TABLES.exercises)
-        .select("id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,memo")
+        .select("id,name,split,muscle_group,metric_type,sort_order,is_active,replaced_by_exercise_id,memo,default_sets")
         .eq("user_id", userId)
         .eq("split", split)
         .eq("is_active", true)
@@ -270,8 +263,8 @@ export function useLogSessionData({
         setLastDurationSetByKey({});
       }
 
-      const weightedDefaults: Record<string, [WeightedSet, WeightedSet]> = {};
-      const durationDefaults: Record<string, [DurationSet, DurationSet]> = {};
+      const weightedDefaults: Record<string, WeightedSet[]> = {};
+      const durationDefaults: Record<string, DurationSet[]> = {};
 
       for (const ex of rows) {
         if (ex.metric_type === "WEIGHTED_REPS") {
