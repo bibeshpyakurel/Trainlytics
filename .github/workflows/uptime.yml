@@ -1,0 +1,73 @@
+name: Uptime
+
+# The README advertises a monitoring endpoint; until now nothing watched it.
+# This probes production on a schedule and opens an issue when it is down, so
+# an outage surfaces somewhere other than a user noticing.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Probe production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the login route responds
+        id: probe
+        run: |
+          url="https://trainlytics-two.vercel.app/login"
+          # Three attempts: a single blip should not page anyone.
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -L "$url" || echo 000)
+            elapsed=$(curl -sS -o /dev/null -w '%{time_total}' -m 30 -L "$url" || echo 0)
+            echo "attempt $attempt: HTTP $code in ${elapsed}s"
+            if [ "$code" = "200" ]; then
+              echo "status=up" >> "$GITHUB_OUTPUT"
+              echo "detail=HTTP $code in ${elapsed}s" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "status=down" >> "$GITHUB_OUTPUT"
+          echo "detail=three consecutive failures, last HTTP $code" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Open or update an outage issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Production probe failing"
+          existing=$(gh issue list --state open --label outage --search "$title" --json number --jq '.[0].number')
+          body="The scheduled uptime probe could not reach https://trainlytics-two.vercel.app/login.
+
+          Detail: ${{ steps.probe.outputs.detail }}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          See RUNBOOK.md for triage steps."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing. ${{ steps.probe.outputs.detail }} — run ${{ github.run_id }}."
+          else
+            gh issue create --title "$title" --label outage --body "$body"
+          fi
+
+      - name: Close the outage issue once recovered
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh issue list --state open --label outage --search "Production probe failing" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Recovered: ${{ steps.probe.outputs.detail }}."
+            gh issue close "$existing"
+          fi
