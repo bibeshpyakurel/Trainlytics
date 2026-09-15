@@ -1,20 +1,32 @@
 name: CI
 
+# Runs on pull requests AND on pushes to main. Previously this was
+# pull_request-only, which meant a direct push to main was never verified.
 on:
+  push:
+    branches: [main]
   pull_request:
-    branches:
-      - "**"
+    branches: ["**"]
+
+# Least privilege: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
+    name: Lint, types, unit tests
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
           cache: npm
@@ -33,3 +45,76 @@ jobs:
 
       - name: DB Plan Check
         run: npm run db:check-plan
+
+
+  e2e:
+    name: Auth E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npm run e2e:install
+
+      # These specs cover route guarding and client-side form validation, so
+      # they never authenticate against Supabase — the app only needs the two
+      # public env vars present in order to boot. Real secrets are used when
+      # they exist so the same job keeps working if an authenticated spec is
+      # added later.
+      - name: Run auth E2E
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key-for-ci-boot-only' }}
+        run: npm run e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  security:
+    name: Dependency advisories (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Reports, does not block. Two production advisories are known and tracked:
+    #
+    #   next   — a critical advisory is open against <=16.3.2 and this app runs
+    #            16.1.6. Upgrading to 16.3.5 was tried and breaks client-side
+    #            rendering on /launch, /signup and /forgot-password, so the
+    #            upgrade needs real work rather than a version bump.
+    #   xlsx   — SheetJS publishes only to its own registry now, so the npm
+    #            package is frozen with no fix available. Replacing it means
+    #            changing the workout export path.
+    #
+    # Dependabot is enabled and will open pull requests as fixes land; this job
+    # keeps the current state visible on every run rather than blocking merges
+    # on something no bump can fix today.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev

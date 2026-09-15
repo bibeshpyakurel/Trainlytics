@@ -111,6 +111,11 @@ export async function proxy(request: NextRequest) {
 
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = ROUTES.login;
+    // Clear the caller's query string before building the login URL. clone()
+    // carries it over, so without this /dashboard?tab=volume would redirect to
+    // /login?tab=volume&next=... and leak the requested page's params onto the
+    // login form. The session-expired branch above already does this.
+    redirectUrl.search = "";
     redirectUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
     redirectUrl.searchParams.set("reason", "auth_required");
     return NextResponse.redirect(redirectUrl);
