@@ -6,6 +6,52 @@ reversed, the reversal is appended rather than the entry deleted.
 
 ---
 
+## 2026-09-16 — Take next 16.3.3, and defer the React Compiler lint rules
+
+**Status:** accepted, with follow-up required.
+
+The standing entry below says 16.3.5 was attempted and reverted because
+client-side rendering broke on `/launch`, `/signup` and `/forgot-password`.
+16.3.3 does not have that fault: the auth suite passes 5/5 against a production
+build, which is a real verdict now the suite no longer runs against a dev
+server. 16.3.3 carries the request-smuggling fix, and pulls `sharp` 0.35.4 with
+it, so both critical advisories close and only the known `xlsx` one remains.
+
+The upgrade brings `eslint-config-next` 16.3.3 and its React Compiler rules,
+which produce six new errors: `react-hooks/set-state-in-effect` five times and
+`react-hooks/preserve-manual-memoization` once, across `InsightsPage.tsx` and
+`LogPage.tsx`. Nothing regressed — the linter got stricter about patterns that
+were already there. Every one is a mount-time initialisation effect that reads
+`window`, `localStorage` or a query parameter and seeds state from it, which is
+how those files stay SSR-safe.
+
+Both rules are downgraded to warnings **scoped to those two files**, and the
+work is tracked in #38. Weakening a gate is not free, and RUNBOOK.md says as
+much about the coverage ratchet, so the scoping matters: the same violation in
+any other file is still an error, and that was verified rather than assumed. The
+alternative was restructuring state initialisation in the two largest components
+in the app during a security upgrade, with an E2E suite that only covers auth
+and would not catch a regression in insights or log.
+
+**Follow-up:** #38. Delete the override block in `eslint.config.mjs` when it
+lands; do not add files to it.
+
+---
+
+## 2026-09-16 — eslint stays on 9
+
+**Status:** accepted, blocked upstream.
+
+Dependabot proposes eslint 10. It cannot be taken yet: `eslint-config-next`
+16.3.3 bundles `eslint-plugin-import` and `eslint-plugin-jsx-a11y`, whose peer
+ranges stop at eslint 9, and `eslint-plugin-react` crashes outright on the v10
+API with `contextOrFilename.getFilename is not a function`.
+
+Nothing in this repository can fix that. Revisit when `eslint-config-next`
+supports eslint 10.
+
+---
+
 ## 2026-09-16 — CI builds the app, and the E2E suite runs against that build
 
 **Status:** accepted.
