@@ -21,9 +21,26 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        command: `npm run dev -- --port ${port}`,
+        // Build and serve the app the way production does, rather than running
+        // the dev server. `npm run dev` is webpack with dev-mode rendering,
+        // while production is a `next build`; a hydration failure is exactly
+        // the kind of fault that appears in one and not the other. DECISIONS.md
+        // names this suite as the acceptance gate for the Next upgrade that was
+        // reverted for breaking client-side rendering, so a dev server here
+        // would let that break straight through the gate meant to catch it.
+        //
+        // This runs everywhere, not only in CI. A cold build is a few seconds
+        // under Turbopack, which is too cheap to justify testing one mode
+        // locally and a different one on the way to production.
+        command: `npm run build && npm run start -- --port ${port}`,
         url: `${baseURL}/login`,
-        timeout: 120000,
+        // The build has to compile before the server can answer.
+        timeout: 180000,
+        // Show the build output. Playwright ignores webServer stdout by
+        // default, which makes a broken build read only as "Timed out waiting
+        // for the web server", and leaves no way to confirm from a passing log
+        // that the build ran at all.
+        stdout: "pipe",
         reuseExistingServer: !process.env.CI,
       },
 });
