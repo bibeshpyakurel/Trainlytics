@@ -38,6 +38,25 @@ lands; do not add files to it.
 
 ---
 
+## 2026-09-16 — vitest stays on 3
+
+**Status:** accepted, blocked on the Node baseline.
+
+Dependabot proposes vitest 5.0.1. Installing it fails: vitest 5 declares a peer
+of `@types/node@^22.0.0 || >=24.0.0`, and this project pins `@types/node@^20`.
+
+Raising `@types/node` to 22 would make it install, and that is the wrong trade.
+`ci.yml` states that node 20 is what the deployment targets, and the matrix runs
+20 and 22 to catch an incompatibility before the platform forces the upgrade.
+Typing the project against node 22 while shipping on node 20 would let a node 22
+API typecheck and then fail at runtime in production — the failure mode the
+matrix exists to prevent, reintroduced through the type definitions.
+
+Take vitest 5 when the deployment moves to node 22, and bump `@types/node` in
+the same change so the types and the runtime move together.
+
+---
+
 ## 2026-09-16 — eslint stays on 9
 
 **Status:** accepted, blocked upstream.
