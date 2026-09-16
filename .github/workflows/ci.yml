@@ -7,6 +7,9 @@ on:
     branches: [main]
   pull_request:
     branches: ["**"]
+  # Lets a run be retried by hand after a transient failure, rather than by
+  # pushing an empty commit.
+  workflow_dispatch:
 
 # Least privilege: nothing here needs to write to the repository.
 permissions:
@@ -18,6 +21,11 @@ concurrency:
 
 jobs:
   quality:
+    # The display name is load-bearing. Branch protection requires the contexts
+    # "Lint, types, unit tests (20)" and "(22)"; renaming this job would leave
+    # protection waiting forever on checks that no longer exist. So the build
+    # step below lives here, under the existing name, rather than in a new job
+    # that nothing would require.
     name: Lint, types, unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -58,6 +66,24 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 7
+
+      # A production build. `tsc --noEmit` type-checks but never emits, so it
+      # cannot catch bundler-level failures: a bad dynamic import, a server
+      # component pulling in client-only code, a missing "use client". Those
+      # appear only here. Until this step existed, the Vercel deployment was
+      # the first thing to compile the app — and the Vercel check is not in
+      # branch protection's required list, so a change that broke only the
+      # build could merge to main with every required check green.
+      #
+      # The public env vars are placeholders. Nothing reads them at build time
+      # (lib/env.client.ts resolves them lazily, inside the browser client),
+      # but setting them keeps the build independent of repository secrets, so
+      # it behaves identically on a pull request from a fork.
+      - name: Build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key-for-ci-build-only
+        run: npm run build
 
       - name: DB Plan Check
         run: npm run db:check-plan
