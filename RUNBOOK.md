@@ -71,9 +71,11 @@ build before it reaches production.
 - **`Dependency advisories`** — this job is advisory and cannot fail the run.
   See `DECISIONS.md` for the standing `next` and `xlsx` advisories.
 - **Playwright** — the report is uploaded as a `playwright-report` artifact on
-  every run, pass or fail. Download it before re-running anything. In CI the
-  suite runs against a production build, not the dev server, so a failure that
-  will not reproduce with `npm run e2e` locally needs `PLAYWRIGHT_PROD=1`.
+  every run, pass or fail. Download it before re-running anything. The suite
+  builds and serves a production build rather than using the dev server, so
+  `npm run e2e` locally runs exactly what CI runs. A "Timed out waiting for the
+  web server" failure usually means the build broke, not the tests — the build
+  output is in the step log above the timeout.
 
 ## Escalation
 
