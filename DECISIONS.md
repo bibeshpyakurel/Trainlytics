@@ -6,6 +6,42 @@ reversed, the reversal is appended rather than the entry deleted.
 
 ---
 
+## 2026-09-16 — CI builds the app, and the E2E suite runs against that build
+
+**Status:** accepted.
+
+Nothing in CI ran `next build`. The required checks were lint, typecheck, unit
+tests, CodeQL and commit format; `tsc --noEmit` type-checks without emitting, so
+no required check ever compiled the app. The Vercel deployment was the first
+thing to build it, and the `Vercel` check is not in branch protection's required
+list — so a change that broke only the build could merge to main with every
+required check green.
+
+The build now runs inside the existing `quality` job rather than in a new one.
+That is deliberate: branch protection requires the contexts
+`Lint, types, unit tests (20)` and `(22)`, so a build step added there is
+blocking immediately. A separate job would need a branch-protection change to
+mean anything, and until someone made it, it would fail exactly as silently as
+the Vercel check does now. The job's display name is therefore load-bearing and
+cannot be renamed to mention the build without updating protection in the same
+change.
+
+The Playwright suite also ran against `npm run dev` — a webpack dev server with
+dev-mode rendering — while production is a `next build`. `DECISIONS.md` names
+that suite as the acceptance gate for the reverted Next 16.3.5 upgrade, whose
+symptom was client-side rendering breaking on `/launch`, `/signup` and
+`/forgot-password`. A hydration failure is precisely the class of bug that shows
+in a production build and not in a dev server, so the gate was running in the
+mode least likely to reproduce the failure it existed to catch. In CI the suite
+now builds and serves the app; locally it keeps the dev server, because
+rebuilding on every run makes the suite too slow to reach for. `PLAYWRIGHT_PROD=1`
+reproduces CI.
+
+All five specs pass against a production build on 16.1.6, so this change gates
+the upgrade rather than blocking today's work.
+
+---
+
 ## 2026-09-15 — Stay on Next 16.1.6 despite an open critical advisory
 
 **Status:** accepted, with follow-up required.

@@ -65,10 +65,15 @@ build before it reaches production.
   just under the measured numbers. If coverage dropped, add tests. Do not lower
   the threshold to make the build green; that is the one change that makes the
   gate worthless.
+- **`Build`** — the production build broke. `tsc --noEmit` passes on plenty of
+  changes that fail to bundle, so read the step's output rather than assuming
+  the types will tell you. Reproduce with `npm run build`.
 - **`Dependency advisories`** — this job is advisory and cannot fail the run.
   See `DECISIONS.md` for the standing `next` and `xlsx` advisories.
 - **Playwright** — the report is uploaded as a `playwright-report` artifact on
-  every run, pass or fail. Download it before re-running anything.
+  every run, pass or fail. Download it before re-running anything. In CI the
+  suite runs against a production build, not the dev server, so a failure that
+  will not reproduce with `npm run e2e` locally needs `PLAYWRIGHT_PROD=1`.
 
 ## Escalation
 
