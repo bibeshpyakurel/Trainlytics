@@ -32,10 +32,16 @@ that suite as the acceptance gate for the reverted Next 16.3.5 upgrade, whose
 symptom was client-side rendering breaking on `/launch`, `/signup` and
 `/forgot-password`. A hydration failure is precisely the class of bug that shows
 in a production build and not in a dev server, so the gate was running in the
-mode least likely to reproduce the failure it existed to catch. In CI the suite
-now builds and serves the app; locally it keeps the dev server, because
-rebuilding on every run makes the suite too slow to reach for. `PLAYWRIGHT_PROD=1`
-reproduces CI.
+mode least likely to reproduce the failure it existed to catch.
+
+The suite now builds and serves in every environment, not only in CI. Keeping
+the dev server locally was considered and rejected on measurement: a cold
+`next build` is under six seconds with Turbopack, which is too cheap to justify
+testing one thing locally and a different one on the way to production.
+
+`webServer.stdout` is set to `pipe` because Playwright ignores it by default.
+Without it a failing build reports only "Timed out waiting for the web server",
+and a passing log gives no way to confirm the build ran at all.
 
 All five specs pass against a production build on 16.1.6, so this change gates
 the upgrade rather than blocking today's work.

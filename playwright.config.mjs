@@ -2,7 +2,6 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = process.env.PORT ? Number(process.env.PORT) : 3100;
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
-const useProductionBuild = Boolean(process.env.CI) || process.env.PLAYWRIGHT_PROD === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -22,24 +21,26 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        // In CI, build and serve the app the way production does. The dev
-        // server runs webpack (`next dev --webpack`) with dev-mode rendering,
+        // Build and serve the app the way production does, rather than running
+        // the dev server. `npm run dev` is webpack with dev-mode rendering,
         // while production is a `next build`; a hydration failure is exactly
         // the kind of fault that appears in one and not the other. DECISIONS.md
         // names this suite as the acceptance gate for the Next upgrade that was
-        // reverted for breaking client-side rendering — running it against a
-        // dev server would let that same break through.
+        // reverted for breaking client-side rendering, so a dev server here
+        // would let that break straight through the gate meant to catch it.
         //
-        // Locally the dev server is kept, because rebuilding on every run makes
-        // the suite too slow to reach for. Set PLAYWRIGHT_PROD=1 to reproduce
-        // CI exactly.
-        command: useProductionBuild
-          ? `npm run build && npm run start -- --port ${port}`
-          : `npm run dev -- --port ${port}`,
+        // This runs everywhere, not only in CI. A cold build is a few seconds
+        // under Turbopack, which is too cheap to justify testing one mode
+        // locally and a different one on the way to production.
+        command: `npm run build && npm run start -- --port ${port}`,
         url: `${baseURL}/login`,
-        // A production build has to compile before it can serve, so it needs
-        // considerably longer to come up than the dev server does.
-        timeout: useProductionBuild ? 300000 : 120000,
+        // The build has to compile before the server can answer.
+        timeout: 180000,
+        // Show the build output. Playwright ignores webServer stdout by
+        // default, which makes a broken build read only as "Timed out waiting
+        // for the web server", and leaves no way to confirm from a passing log
+        // that the build ran at all.
+        stdout: "pipe",
         reuseExistingServer: !process.env.CI,
       },
 });
