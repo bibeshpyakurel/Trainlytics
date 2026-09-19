@@ -24,6 +24,7 @@ import {
 } from "@/features/calories/intake/view";
 import { formatCalories, getTotalCalories } from "@/features/calories/intake/utils";
 import { toLocalIsoDate } from "@/lib/localDate";
+import { toChartNumber } from "@/lib/chartValue";
 import ModalSheet from "@/shared/ui/ModalSheet";
 import {
   Area,
@@ -374,8 +375,8 @@ export default function IntakePanel() {
                   payloadUniqBy={(entry) => entry.dataKey}
                   contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
                   labelStyle={{ color: "#e4e4e7" }}
-                  formatter={(value: number | string | undefined, name?: string | number) => {
-                    const numericValue = typeof value === "number" ? value : Number(value ?? 0);
+                  formatter={(value: unknown, name?: unknown) => {
+                    const numericValue = toChartNumber(value);
                     const labelByKey: Record<string, string> = { total: "Total", preWorkout: "Pre", postWorkout: "Post" };
                     const key = String(name ?? "total");
                     return [`${formatCalories(numericValue)} kcal`, labelByKey[key] ?? key] as const;

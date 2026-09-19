@@ -14,22 +14,31 @@ permissions:
 
 concurrency:
   group: uptime
-  cancel-in-progress: true
+  # Never cancel a probe in flight. A run that is cancelled midway through
+  # opening the outage issue records nothing, so the outage it detected is
+  # lost. Monitoring runs to completion or it is not monitoring.
+  cancel-in-progress: false
 
 jobs:
   probe:
     name: Probe production
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      PROBE_URL: https://trainlytics-two.vercel.app/login
     steps:
       - name: Check the login route responds
         id: probe
         run: |
-          url="https://trainlytics-two.vercel.app/login"
+          set -uo pipefail
           # Three attempts: a single blip should not page anyone.
           for attempt in 1 2 3; do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -L "$url" || echo 000)
-            elapsed=$(curl -sS -o /dev/null -w '%{time_total}' -m 30 -L "$url" || echo 0)
+            # One request, both values. This previously issued two separate
+            # curls — so the latency reported belonged to a different request
+            # than the status code reported, and the probe hit production twice
+            # as often as it needed to.
+            read -r code elapsed <<<"$(curl -sS -o /dev/null \
+              -w '%{http_code} %{time_total}' -m 30 -L "$PROBE_URL" || echo '000 0')"
             echo "attempt $attempt: HTTP $code in ${elapsed}s"
             if [ "$code" = "200" ]; then
               echo "status=up" >> "$GITHUB_OUTPUT"
@@ -54,12 +63,18 @@ jobs:
           gh label create outage --color B60205 \
             --description "Production is failing its scheduled probe" 2>/dev/null || true
           existing=$(gh issue list --state open --label outage --search "$title" --json number --jq '.[0].number // empty' || true)
-          body="The scheduled uptime probe could not reach https://trainlytics-two.vercel.app/login.
+          # A heredoc, because an indented shell string carries its leading
+          # whitespace into the issue body, and four spaces of indent is a
+          # markdown code block. The outage issue rendered as one.
+          body=$(cat <<EOF
+          The scheduled uptime probe could not reach $PROBE_URL.
 
           Detail: ${{ steps.probe.outputs.detail }}
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-          See RUNBOOK.md for triage steps."
+          See RUNBOOK.md for triage steps.
+          EOF
+          )
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "Still failing. ${{ steps.probe.outputs.detail }} — run ${{ github.run_id }}."
           else

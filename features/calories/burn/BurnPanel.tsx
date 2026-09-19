@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toLocalIsoDate } from "@/lib/localDate";
+import { toChartNumber } from "@/lib/chartValue";
 import {
   Area,
   CartesianGrid,
@@ -333,9 +334,8 @@ export default function BurnPanel() {
                   payloadUniqBy={(entry) => entry.dataKey}
                   contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "10px" }}
                   labelStyle={{ color: "#e4e4e7" }}
-                  formatter={(value: number | string | undefined) => {
-                    const numericValue = typeof value === "number" ? value : Number(value ?? 0);
-                    return [`${formatCalories(numericValue)} kcal`, "Estimated Burn"] as const;
+                  formatter={(value: unknown) => {
+                    return [`${formatCalories(toChartNumber(value))} kcal`, "Estimated Burn"] as const;
                   }}
                   labelFormatter={(label, payload) => payload?.[0]?.payload?.logDate || label}
                 />

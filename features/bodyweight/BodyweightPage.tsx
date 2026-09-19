@@ -28,6 +28,7 @@ import {
 } from "@/features/bodyweight/workflows";
 import { calculateBmi, getBmiCategory } from "@/lib/energyCalculations";
 import { loadProfileEnergySettingsForCurrentUser } from "@/lib/dailyEnergyMetrics";
+import { toChartNumber } from "@/lib/chartValue";
 import {
   getBodyweightChartView,
   getBodyweightHistoryView,
@@ -470,11 +471,8 @@ export default function BodyweightPage() {
                       borderRadius: "10px",
                     }}
                     labelStyle={{ color: "#e4e4e7" }}
-                    formatter={(value: number | string | undefined) => {
-                      const numericValue =
-                        typeof value === "number"
-                          ? value
-                          : Number(value ?? 0);
+                    formatter={(value: unknown) => {
+                      const numericValue = toChartNumber(value);
 
                       return [`${numericValue.toFixed(1)} ${displayUnit}`, "Bodyweight"] as const;
                     }}

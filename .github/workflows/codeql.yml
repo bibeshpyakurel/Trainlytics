@@ -5,8 +5,12 @@ name: CodeQL
 on:
   push:
     branches: [main]
+  # Every pull request, not only those targeting main. Work is merged into
+  # `development` first and reaches main in batches, so analysing main-targeted
+  # pull requests alone means a finding arrives after the code is already
+  # reviewed and merged once. CI already runs on "**"; this now matches.
   pull_request:
-    branches: [main]
+    branches: ["**"]
   schedule:
     - cron: "27 4 * * 1"
 
@@ -38,8 +42,8 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-extended
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@977e6ceaea7361825998245d787fa3b4d6b9e5df # codeql-bundle-v2.27.0
+      # No build step: javascript-typescript is analysed from source, so
+      # Autobuild has nothing to compile and only costs minutes.
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@977e6ceaea7361825998245d787fa3b4d6b9e5df # codeql-bundle-v2.27.0

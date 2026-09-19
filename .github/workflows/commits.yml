@@ -3,9 +3,13 @@ name: Commits
 # The changelog and release notes are generated from commit subjects, so the
 # format is enforced rather than encouraged. A commit that does not parse is a
 # change that vanishes from the release notes.
+# Every pull request, not only those targeting main. Work lands on development
+# first and reaches main in batches, so checking main-targeted pull requests
+# alone let a non-conforming subject through on the way in — and the changelog
+# is generated from those subjects. CI and CodeQL already run on "**".
 on:
   pull_request:
-    branches: [main]
+    branches: ["**"]
 
 permissions:
   contents: read
