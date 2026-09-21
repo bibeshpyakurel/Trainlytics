@@ -1,0 +1,8 @@
+{
+  "role": "Sole architect and engineer",
+  "resumeEligible": true,
+  "stack": ["Next.js 16", "React 19", "TypeScript", "Supabase", "PostgreSQL RLS", "Tailwind CSS 4", "Recharts", "OpenAI API", "Vitest", "Playwright", "GitHub Actions", "Vercel"],
+  "oneLiner": "A fitness analytics platform with per-user PostgreSQL row-level security, dashboard trends, and an AI insights endpoint.",
+  "startDate": "2025-12",
+  "endDate": "2026-01"
+}
